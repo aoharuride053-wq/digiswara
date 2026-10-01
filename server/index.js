@@ -69,9 +69,14 @@ app.use(session({
 
 // Database setup
 const RAILWAY_VOLUME_MOUNT_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH;
-const dbPath = process.env.DB_PATH || (RAILWAY_VOLUME_MOUNT_PATH
-  ? path.join(RAILWAY_VOLUME_MOUNT_PATH, 'app.db')
-  : './database/app.db');
+const resolveStoragePath = (configuredPath, volumeDefault, localDefault) => {
+  if (configuredPath && path.isAbsolute(configuredPath)) return configuredPath;
+  if (RAILWAY_VOLUME_MOUNT_PATH) {
+    return path.join(RAILWAY_VOLUME_MOUNT_PATH, configuredPath || volumeDefault);
+  }
+  return configuredPath || localDefault;
+};
+const dbPath = resolveStoragePath(process.env.DB_PATH, 'app.db', './database/app.db');
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
@@ -182,9 +187,11 @@ db.serialize(() => {
   `);
 });
 // Direktori penyimpanan file audio hasil generate (di-serve sebagai static file)
-const AUDIO_DIR = process.env.AUDIO_DIR || (RAILWAY_VOLUME_MOUNT_PATH
-  ? path.join(RAILWAY_VOLUME_MOUNT_PATH, 'audio')
-  : path.join(__dirname, '..', 'public', 'audio'));
+const AUDIO_DIR = resolveStoragePath(
+  process.env.AUDIO_DIR,
+  'audio',
+  path.join(__dirname, '..', 'public', 'audio')
+);
 if (!fs.existsSync(AUDIO_DIR)) {
   fs.mkdirSync(AUDIO_DIR, { recursive: true });
 }
@@ -1386,10 +1393,12 @@ function normalizeGeminiAudio(rawBuffer, mimeType) {
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server berjalan di http://localhost:${PORT}`);
+  console.log(`Railway volume mount: ${RAILWAY_VOLUME_MOUNT_PATH || '(not mounted)'}`);
   console.log(`SQLite database path: ${dbPath}`);
-  if (!RAILWAY_VOLUME_MOUNT_PATH && !process.env.DB_PATH) {
+  if (process.env.NODE_ENV === 'production' && !RAILWAY_VOLUME_MOUNT_PATH) {
     console.warn('Railway Volume tidak terdeteksi; SQLite berada di filesystem lokal dan dapat hilang saat redeploy/restart.');
   }
+  console.log(`Audio storage path: ${AUDIO_DIR}`);
   console.log(`Model Gemini TTS fallback order: ${GEMINI_TTS_MODEL_ORDER.map((model) => model.id).join(' -> ')}`);
   console.log(`Model naskah Voice Over Xkiro: ${XKIRO_VOICEOVER_MODELS.join(' -> ')}`);
   console.log(process.env.XKIRO_API_KEY ? 'XKIRO_API_KEY: terdeteksi' : 'XKIRO_API_KEY: BELUM DIISI');
