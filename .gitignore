@@ -4,7 +4,6 @@ client/node_modules/
 # Jangan commit kredensial
 .env
 client/.env
-.env.example
 
 # Database SQLite dan file audio hasil generate
 database/*.db

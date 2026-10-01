@@ -29,6 +29,7 @@ const DATABASE_BACKEND = configuredDatabaseBackend || (
   process.env.NODE_ENV === 'production' || MONGODB_URI ? 'mongodb' : 'sqlite'
 );
 const USE_MONGODB = DATABASE_BACKEND === 'mongodb';
+let mongoReady = !USE_MONGODB;
 const MONGODB_DATABASE = String(process.env.MONGODB_DATABASE || 'digiswara').trim();
 if (!['mongodb', 'sqlite'].includes(DATABASE_BACKEND)) {
   throw new Error('DATABASE_BACKEND harus bernilai mongodb atau sqlite.');
@@ -72,6 +73,15 @@ app.use(cors({
 // 15MB menampung invoice base64 (file maksimal 8MB -> ~10.7MB base64).
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use('/api', (req, res, next) => {
+  if (!mongoReady && req.path !== '/health') {
+    return res.status(503).json({
+      message: 'Database sedang tersambung. Coba lagi sebentar.',
+      code: 'DATABASE_UNAVAILABLE'
+    });
+  }
+  next();
+});
 
 // Session setup
 app.use(session({
@@ -1303,8 +1313,9 @@ app.post('/api/tts/generate', authenticateJWT, async (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({
-    status: 'ok',
+    status: mongoReady ? 'ok' : 'degraded',
     databaseBackend: USE_MONGODB ? 'mongodb' : 'sqlite',
+    databaseReady: mongoReady,
     timestamp: new Date().toISOString()
   });
 });
@@ -1515,37 +1526,43 @@ function normalizeGeminiAudio(rawBuffer, mimeType) {
 // Connect account/transaction storage before accepting webhooks or registrations.
 const server = require('http').createServer(app);
 const startServer = async () => {
-  try {
-    if (USE_MONGODB) {
-      await mongoStore.connect(MONGODB_URI, MONGODB_DATABASE);
-      const migrated = await mongoStore.migrateFromSqlite(db);
-      console.log(`MongoDB account/transaction store connected (database=${MONGODB_DATABASE}); migrated ${migrated.users} users and ${migrated.transactions} transactions from SQLite.`);
-    } else if (process.env.NODE_ENV === 'production') {
+  server.listen(PORT, () => {
+    console.log(`Server berjalan di http://localhost:${PORT}`);
+    console.log(`Account/transaction store: ${USE_MONGODB ? 'MongoDB (connecting)' : 'SQLite'}`);
+    console.log(`Railway volume mount: ${RAILWAY_VOLUME_MOUNT_PATH || '(not mounted)'}`);
+    console.log(`SQLite history/device database path: ${dbPath}`);
+    if (process.env.NODE_ENV === 'production' && !RAILWAY_VOLUME_MOUNT_PATH) {
+      console.warn('Railway Volume tidak terdeteksi; SQLite history/device dan audio lokal dapat hilang saat redeploy/restart.');
+    }
+    console.log(`Audio storage path: ${AUDIO_DIR}`);
+    console.log(`Model Gemini TTS fallback order: ${GEMINI_TTS_MODEL_ORDER.map((model) => model.id).join(' -> ')}`);
+    console.log(`Model naskah Voice Over Xkiro: ${XKIRO_VOICEOVER_MODELS.join(' -> ')}`);
+    console.log(process.env.XKIRO_API_KEY ? 'XKIRO_API_KEY: terdeteksi' : 'XKIRO_API_KEY: BELUM DIISI');
+    console.log(
+      process.env.GEMINI_API_KEY
+        ? 'GEMINI_API_KEY: terdeteksi'
+        : 'GEMINI_API_KEY: BELUM DIISI (isi file .env dulu!)'
+    );
+  });
+
+  if (!USE_MONGODB) {
+    if (process.env.NODE_ENV === 'production') {
       console.warn('DATABASE_BACKEND bukan mongodb; akun dan transaksi memakai SQLite lokal dan dapat hilang saat container diganti.');
     }
+    return;
+  }
 
-    server.listen(PORT, () => {
-      console.log(`Server berjalan di http://localhost:${PORT}`);
-      console.log(`Account/transaction store: ${USE_MONGODB ? 'MongoDB' : 'SQLite'}`);
-      console.log(`Railway volume mount: ${RAILWAY_VOLUME_MOUNT_PATH || '(not mounted)'}`);
-      console.log(`SQLite history/device database path: ${dbPath}`);
-      if (process.env.NODE_ENV === 'production' && !RAILWAY_VOLUME_MOUNT_PATH) {
-        console.warn('Railway Volume tidak terdeteksi; SQLite history/device dan audio lokal dapat hilang saat redeploy/restart.');
-      }
-      console.log(`Audio storage path: ${AUDIO_DIR}`);
-      console.log(`Model Gemini TTS fallback order: ${GEMINI_TTS_MODEL_ORDER.map((model) => model.id).join(' -> ')}`);
-      console.log(`Model naskah Voice Over Xkiro: ${XKIRO_VOICEOVER_MODELS.join(' -> ')}`);
-      console.log(process.env.XKIRO_API_KEY ? 'XKIRO_API_KEY: terdeteksi' : 'XKIRO_API_KEY: BELUM DIISI');
-      console.log(
-        process.env.GEMINI_API_KEY
-          ? 'GEMINI_API_KEY: terdeteksi'
-          : 'GEMINI_API_KEY: BELUM DIISI (isi file .env dulu!)'
-      );
-    });
-  } catch (error) {
-    const message = String(error.message || error).replace(MONGODB_URI, '[redacted MongoDB URI]');
-    console.error(`Backend gagal inisialisasi: ${message}`);
-    db.close(() => process.exit(1));
+  while (!mongoReady) {
+    try {
+      await mongoStore.connect(MONGODB_URI, MONGODB_DATABASE);
+      const migrated = await mongoStore.migrateFromSqlite(db);
+      mongoReady = true;
+      console.log(`MongoDB account/transaction store connected (database=${MONGODB_DATABASE}); migrated ${migrated.users} users and ${migrated.transactions} transactions from SQLite.`);
+    } catch (error) {
+      const message = String(error.message || error).replace(MONGODB_URI, '[redacted MongoDB URI]');
+      console.error(`MongoDB belum terhubung; mencoba lagi dalam 15 detik: ${message}`);
+      await new Promise((resolve) => setTimeout(resolve, 15000));
+    }
   }
 };
 

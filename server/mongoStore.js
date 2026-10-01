@@ -13,40 +13,47 @@ class MongoStore {
     if (this.db) return this.db;
 
     const client = new MongoClient(uri, { serverSelectionTimeoutMS: 10000 });
-    await client.connect();
-    const db = client.db(databaseName);
-    const users = db.collection('users');
-    const transactions = db.collection('lynk_transactions');
+    try {
+      await client.connect();
+      const db = client.db(databaseName);
+      const users = db.collection('users');
+      const transactions = db.collection('lynk_transactions');
 
-    await Promise.all([
-      users.createIndexes([
-        { key: { id: 1 }, name: 'uniq_user_id', unique: true },
-        { key: { username: 1 }, name: 'uniq_username', unique: true },
-        { key: { email: 1 }, name: 'uniq_email', unique: true },
-        {
-          key: { lynk_ref_id: 1 },
-          name: 'uniq_lynk_ref_id',
-          unique: true,
-          partialFilterExpression: { lynk_ref_id: { $type: 'string' } }
-        }
-      ]),
-      transactions.createIndex({ ref_id: 1 }, { name: 'uniq_transaction_ref_id', unique: true })
-    ]);
+      await Promise.all([
+        users.createIndexes([
+          { key: { id: 1 }, name: 'uniq_user_id', unique: true },
+          { key: { username: 1 }, name: 'uniq_username', unique: true },
+          { key: { email: 1 }, name: 'uniq_email', unique: true },
+          {
+            key: { lynk_ref_id: 1 },
+            name: 'uniq_lynk_ref_id',
+            unique: true,
+            partialFilterExpression: { lynk_ref_id: { $type: 'string' } }
+          }
+        ]),
+        transactions.createIndex({ ref_id: 1 }, { name: 'uniq_transaction_ref_id', unique: true })
+      ]);
 
-    this.client = client;
-    this.db = db;
-    this.users = users;
-    this.transactions = transactions;
-    this.counters = db.collection('counters');
-    const highestUser = await users.findOne({}, { sort: { id: -1 }, projection: { id: 1 } });
-    if (highestUser) {
-      await this.counters.updateOne(
-        { _id: 'users' },
-        { $max: { seq: highestUser.id } },
-        { upsert: true }
-      );
+      const counters = db.collection('counters');
+      const highestUser = await users.findOne({}, { sort: { id: -1 }, projection: { id: 1 } });
+      if (highestUser) {
+        await counters.updateOne(
+          { _id: 'users' },
+          { $max: { seq: highestUser.id } },
+          { upsert: true }
+        );
+      }
+
+      this.client = client;
+      this.db = db;
+      this.users = users;
+      this.transactions = transactions;
+      this.counters = counters;
+      return db;
+    } catch (error) {
+      await client.close().catch(() => {});
+      throw error;
     }
-    return db;
   }
 
   async migrateFromSqlite(sqliteDb) {
