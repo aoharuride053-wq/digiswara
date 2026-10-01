@@ -176,6 +176,15 @@ db.serialize(() => {
   db.run('ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1', (err) => {
     if (err && !err.message.includes('duplicate column name')) console.error(err.message);
   });
+  db.run(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.run('CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id)');
 
   // Transaksi Lynk.id yang diterima lewat webhook (bukti pembayaran).
   db.run(`
@@ -470,6 +479,140 @@ app.post('/api/login', (req, res) => {
   }
 });
 
+const passwordResetAttempts = new Map();
+const PASSWORD_RESET_LIMIT = 5;
+const PASSWORD_RESET_WINDOW_MS = 15 * 60 * 1000;
+const checkPasswordResetRateLimit = (key) => {
+  const now = Date.now();
+  const entry = passwordResetAttempts.get(key);
+  if (!entry || entry.resetAt <= now) {
+    passwordResetAttempts.set(key, { count: 1, resetAt: now + PASSWORD_RESET_WINDOW_MS });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= PASSWORD_RESET_LIMIT;
+};
+
+app.post('/api/password/forgot', async (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
+  if (!checkPasswordResetRateLimit(ip)) {
+    return res.status(429).json({ message: 'Terlalu banyak permintaan. Coba lagi dalam 15 menit.' });
+  }
+
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ message: 'Masukkan alamat email yang valid.' });
+  }
+
+  const genericMessage = 'Jika email terdaftar, tautan untuk mengganti password akan dikirim.';
+  try {
+    const user = USE_MONGODB
+      ? await mongoStore.findUserByEmail(email)
+      : await new Promise((resolve, reject) => {
+        db.get('SELECT id, email FROM users WHERE email = ?', [email], (err, row) =>
+          err ? reject(err) : resolve(row || null)
+        );
+      });
+    if (!user) return res.json({ success: true, message: genericMessage });
+
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    if (USE_MONGODB) {
+      await mongoStore.createPasswordResetToken({ userId: user.id, tokenHash, expiresAt });
+    } else {
+      await new Promise((resolve, reject) => {
+        db.run('DELETE FROM password_reset_tokens WHERE user_id = ?', [user.id], (deleteErr) => {
+          if (deleteErr) return reject(deleteErr);
+          db.run(
+            'INSERT INTO password_reset_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)',
+            [tokenHash, user.id, expiresAt.getTime()],
+            (insertErr) => (insertErr ? reject(insertErr) : resolve())
+          );
+        });
+      });
+    }
+
+    const resetUrl = new URL('/reset-password', process.env.APP_URL || `http://localhost:${PORT}`);
+    resetUrl.searchParams.set('token', resetToken);
+    try {
+      await mailer.sendPasswordResetEmail({ to: user.email, resetUrl: resetUrl.toString() });
+    } catch (mailError) {
+      if (USE_MONGODB) {
+        await mongoStore.deletePasswordResetToken(tokenHash);
+      } else {
+        await new Promise((resolve) => db.run(
+          'DELETE FROM password_reset_tokens WHERE token_hash = ?', [tokenHash], () => resolve()
+        ));
+      }
+      console.error('Gagal mengirim email reset password:', mailError.message);
+    }
+    return res.json({ success: true, message: genericMessage });
+  } catch (error) {
+    console.error('Permintaan reset password gagal:', error.message);
+    return res.status(500).json({ message: 'Permintaan belum dapat diproses. Coba lagi nanti.' });
+  }
+});
+
+app.post('/api/password/reset', async (req, res) => {
+  const resetToken = String(req.body?.token || '');
+  const password = String(req.body?.password || '');
+  if (resetToken.length !== 64 || password.length < 8 || password.length > 128) {
+    return res.status(400).json({ message: 'Tautan tidak valid atau password tidak memenuhi syarat.' });
+  }
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    let resetRecord;
+    if (USE_MONGODB) {
+      resetRecord = await mongoStore.consumePasswordResetToken(tokenHash);
+    } else {
+      resetRecord = await new Promise((resolve, reject) => {
+        db.serialize(() => {
+          db.run('BEGIN IMMEDIATE', (beginError) => {
+            if (beginError) return reject(beginError);
+            db.get(
+              'SELECT user_id FROM password_reset_tokens WHERE token_hash = ? AND expires_at > ?',
+              [tokenHash, Date.now()],
+              (selectError, row) => {
+                if (selectError || !row) {
+                  return db.run('ROLLBACK', () => selectError ? reject(selectError) : resolve(null));
+                }
+                db.run('DELETE FROM password_reset_tokens WHERE token_hash = ?', [tokenHash], (deleteError) => {
+                  if (deleteError) return db.run('ROLLBACK', () => reject(deleteError));
+                  db.run('COMMIT', (commitError) =>
+                    commitError ? reject(commitError) : resolve({ user_id: row.user_id })
+                  );
+                });
+              }
+            );
+          });
+        });
+      });
+    }
+    if (!resetRecord) {
+      return res.status(400).json({ message: 'Tautan reset tidak valid atau sudah kedaluwarsa. Minta tautan baru.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    if (USE_MONGODB) {
+      await mongoStore.updatePassword(resetRecord.user_id, hashedPassword);
+    } else {
+      await new Promise((resolve, reject) => {
+        db.run('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, resetRecord.user_id], function (err) {
+          if (err) return reject(err);
+          if (!this.changes) return reject(new Error('Akun tidak ditemukan saat memperbarui password.'));
+          resolve();
+        });
+      });
+    }
+    return res.json({ success: true, message: 'Password berhasil diganti. Silakan masuk dengan password baru.' });
+  } catch (error) {
+    console.error('Reset password gagal:', error.message);
+    return res.status(500).json({ message: 'Password belum dapat diganti. Minta tautan reset baru.' });
+  }
+});
+
 // ===== Webhook Lynk.id =====
 // Daftarkan URL ini di dashboard Lynk.id: Settings > Integrations > Webhooks
 //   https://<domain-kamu>/api/webhook/lynk
@@ -624,13 +767,14 @@ app.post('/api/register/invoice', async (req, res) => {
 
     if (!invoice || !invoice.data || !invoice.type) {
       return res.status(400).json({
-        message: 'Upload file invoice (PDF atau gambar) terlebih dahulu.',
+        message: 'Upload file invoice PDF terlebih dahulu.',
         code: 'INVOICE_REQUIRED'
       });
     }
-    if (!ALLOWED_MIME_TYPES.has(invoice.type)) {
+    const filename = String(invoice.filename || '').trim();
+    if (!filename.toLowerCase().endsWith('.pdf') || !ALLOWED_MIME_TYPES.has(invoice.type)) {
       return res.status(400).json({
-        message: 'Format file harus PDF, PNG, JPG, JPEG, WEBP, atau GIF.',
+        message: 'Format invoice harus PDF.',
         code: 'INVALID_FILE_TYPE'
       });
     }
@@ -638,6 +782,11 @@ app.post('/api/register/invoice', async (req, res) => {
     const base64Data = String(invoice.data);
     if (!/^[A-Za-z0-9+/=\r\n]+$/.test(base64Data)) {
       return res.status(400).json({ message: 'File invoice rusak.', code: 'INVALID_FILE' });
+    }
+    const pdfHeader = Buffer.from('%PDF-');
+    const headerWindow = Buffer.from(base64Data, 'base64').subarray(0, 1024);
+    if (headerWindow.indexOf(pdfHeader) === -1) {
+      return res.status(400).json({ message: 'File tidak memiliki format PDF yang valid.', code: 'INVALID_FILE' });
     }
     const approxBytes = Math.floor(base64Data.length * 0.75);
     if (approxBytes > 8 * 1024 * 1024) {
@@ -962,6 +1111,48 @@ app.get('/api/profile', authenticateJWT, (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ user });
   });
+});
+
+app.post('/api/profile/password', authenticateJWT, async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '');
+  const newPassword = String(req.body?.newPassword || '');
+  if (newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ message: 'Password baru harus terdiri dari 8 sampai 128 karakter.' });
+  }
+
+  try {
+    const user = USE_MONGODB
+      ? await mongoStore.findUserPasswordById(req.user.id)
+      : await new Promise((resolve, reject) => {
+        db.get('SELECT password FROM users WHERE id = ?', [req.user.id], (err, row) =>
+          err ? reject(err) : resolve(row || null)
+        );
+      });
+    if (!user || !(await bcrypt.compare(currentPassword, user.password))) {
+      return res.status(400).json({ message: 'Password saat ini tidak sesuai.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    if (USE_MONGODB) {
+      await mongoStore.updatePassword(req.user.id, hashedPassword);
+      await mongoStore.deletePasswordResetTokensForUser(req.user.id);
+    } else {
+      await new Promise((resolve, reject) => {
+        db.run('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, req.user.id], (err) =>
+          err ? reject(err) : resolve()
+        );
+      });
+      await new Promise((resolve, reject) => {
+        db.run('DELETE FROM password_reset_tokens WHERE user_id = ?', [req.user.id], (err) =>
+          err ? reject(err) : resolve()
+        );
+      });
+    }
+    return res.json({ success: true, message: 'Password berhasil diganti.' });
+  } catch (error) {
+    console.error('Ganti password profil gagal:', error.message);
+    return res.status(500).json({ message: 'Password belum dapat diganti. Coba lagi.' });
+  }
 });
 
 // Get TTS history

@@ -9,7 +9,8 @@ import {
   ArrowRightOnRectangleIcon,
   ClockIcon,
   MicrophoneIcon,
-  MusicalNoteIcon
+  MusicalNoteIcon,
+  KeyIcon
 } from '@heroicons/react/24/outline';
 
 const StatCard = ({ icon: Icon, label, value }) => (
@@ -29,6 +30,8 @@ const ProfilePage = () => {
   const [profile, setProfile] = useState(null);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [savingPassword, setSavingPassword] = useState(false);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -53,6 +56,32 @@ const ProfilePage = () => {
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const handlePasswordChange = async (event) => {
+    event.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast.error('Konfirmasi password baru tidak sama.');
+      return;
+    }
+    if (passwordForm.newPassword.length < 8 || passwordForm.newPassword.length > 128) {
+      toast.error('Password baru harus terdiri dari 8 sampai 128 karakter.');
+      return;
+    }
+
+    setSavingPassword(true);
+    try {
+      await api.post('/api/profile/password', {
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword
+      });
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      toast.success('Password berhasil diganti.');
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Password belum dapat diganti.');
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   return (
@@ -107,6 +136,64 @@ const ProfilePage = () => {
             />
           </div>
         )}
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-card">
+        <div className="mb-5 flex items-center gap-3">
+          <KeyIcon className="h-5 w-5 text-primary-600" />
+          <div>
+            <h2 className="font-semibold text-slate-800">Ganti password</h2>
+            <p className="text-sm text-slate-500">Verifikasi password saat ini sebelum menyimpan yang baru.</p>
+          </div>
+        </div>
+        <form onSubmit={handlePasswordChange} className="grid gap-4 sm:grid-cols-2">
+          <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
+            Password saat ini
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={passwordForm.currentPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-700">
+            Password baru
+            <input
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={128}
+              required
+              value={passwordForm.newPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+            />
+          </label>
+          <label className="block text-sm font-medium text-slate-700">
+            Ulangi password baru
+            <input
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={128}
+              required
+              value={passwordForm.confirmPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+            />
+          </label>
+          <div className="sm:col-span-2">
+            <button
+              type="submit"
+              disabled={savingPassword}
+              className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingPassword ? 'Menyimpan...' : 'Simpan password baru'}
+            </button>
+          </div>
+        </form>
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-card">

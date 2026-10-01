@@ -7,6 +7,7 @@ class MongoStore {
     this.users = null;
     this.transactions = null;
     this.counters = null;
+    this.passwordResetTokens = null;
   }
 
   async connect(uri, databaseName = 'digiswara') {
@@ -18,6 +19,7 @@ class MongoStore {
       const db = client.db(databaseName);
       const users = db.collection('users');
       const transactions = db.collection('lynk_transactions');
+      const passwordResetTokens = db.collection('password_reset_tokens');
 
       await Promise.all([
         users.createIndexes([
@@ -31,7 +33,11 @@ class MongoStore {
             partialFilterExpression: { lynk_ref_id: { $type: 'string' } }
           }
         ]),
-        transactions.createIndex({ ref_id: 1 }, { name: 'uniq_transaction_ref_id', unique: true })
+        transactions.createIndex({ ref_id: 1 }, { name: 'uniq_transaction_ref_id', unique: true }),
+        passwordResetTokens.createIndexes([
+          { key: { token_hash: 1 }, name: 'uniq_password_reset_token_hash', unique: true },
+          { key: { expires_at: 1 }, name: 'ttl_password_reset_expiry', expireAfterSeconds: 0 }
+        ])
       ]);
 
       const counters = db.collection('counters');
@@ -49,6 +55,7 @@ class MongoStore {
       this.users = users;
       this.transactions = transactions;
       this.counters = counters;
+      this.passwordResetTokens = passwordResetTokens;
       return db;
     } catch (error) {
       await client.close().catch(() => {});
@@ -118,12 +125,45 @@ class MongoStore {
     );
   }
 
+  findUserPasswordById(id) {
+    return this.users.findOne({ id }, { projection: { password: 1 } });
+  }
+
   findUserByRef(refId) {
     return this.users.findOne({ lynk_ref_id: refId });
   }
 
   findUserByEmail(email) {
     return this.users.findOne({ email });
+  }
+
+  async updatePassword(id, password) {
+    const result = await this.users.updateOne({ id }, { $set: { password } });
+    if (!result.matchedCount) throw new Error('Akun tidak ditemukan saat memperbarui password.');
+  }
+
+  async createPasswordResetToken({ userId, tokenHash, expiresAt }) {
+    await this.passwordResetTokens.deleteMany({ user_id: userId });
+    await this.passwordResetTokens.insertOne({
+      user_id: userId,
+      token_hash: tokenHash,
+      expires_at: expiresAt
+    });
+  }
+
+  deletePasswordResetTokensForUser(userId) {
+    return this.passwordResetTokens.deleteMany({ user_id: userId });
+  }
+
+  consumePasswordResetToken(tokenHash) {
+    return this.passwordResetTokens.findOneAndDelete({
+      token_hash: tokenHash,
+      expires_at: { $gt: new Date() }
+    });
+  }
+
+  deletePasswordResetToken(tokenHash) {
+    return this.passwordResetTokens.deleteOne({ token_hash: tokenHash });
   }
 
   findUserByUsername(username) {
@@ -170,6 +210,7 @@ class MongoStore {
     this.users = null;
     this.transactions = null;
     this.counters = null;
+    this.passwordResetTokens = null;
   }
 
   findTransactionByRef(refId) {

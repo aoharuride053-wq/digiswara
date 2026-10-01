@@ -11,7 +11,7 @@ const formatTime = (seconds) => {
 const AudioPlayer = ({
   src,
   meta = [],
-  fileName = 'suara-gemini.wav',
+  fileName = 'suara-digiswara.wav',
   onDownloadError,
   onDownloadComplete
 }) => {

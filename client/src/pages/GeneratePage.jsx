@@ -319,14 +319,14 @@ const GeneratePage = () => {
             {isGenerating && (
               <div className="flex flex-col items-center gap-3 py-10">
                 <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary-200 border-t-primary-600" />
-                <p className="text-sm text-slate-500">Gemini sedang menyiapkan suaranya...</p>
+                <p className="text-sm text-slate-500">Digiswara sedang menyiapkan suaranya...</p>
               </div>
             )}
 
             {!isGenerating && result && (
               <AudioPlayer
                 src={result.audioUrl}
-                fileName={`suara-${result.voiceName || 'gemini'}-${result.toneId}.wav`}
+                fileName={`suara-${result.voiceName || 'digiswara'}-${result.toneId}.wav`}
                 meta={[
                   { label: 'Karakter', value: result.voiceName },
                   { label: 'Nada', value: result.toneName },
@@ -394,7 +394,7 @@ const GeneratePage = () => {
               <li>&bull; Gunakan tanda baca yang wajar, karena itu menentukan jeda bicara.</li>
               <li>&bull; Tulis angka sebagai kata bila ingin dibaca jelas, misalnya &quot;lima puluh&quot;.</li>
               <li>&bull; Maksimal {MAX_CHARS} karakter per sekali generate.</li>
-              <li>&bull; Kuota gratis Gemini punya batas per menit. Bila muncul error 429, tunggu sebentar.</li>
+              <li>&bull; Jika muncul error 429, tunggu beberapa saat sebelum mencoba lagi.</li>
             </ul>
           </section>
         </div>

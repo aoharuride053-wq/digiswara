@@ -58,7 +58,7 @@ const Layout = ({ children }) => {
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-secondary-500">
             <SpeakerWaveIcon className="h-5 w-5 text-white" />
           </span>
-          <span className="text-lg font-bold gradient-text">TTS Gemini</span>
+          <span className="text-lg font-bold gradient-text">Digiswara</span>
         </Link>
 
         <NavLinks />
@@ -88,7 +88,7 @@ const Layout = ({ children }) => {
           />
           <aside className="relative flex h-full w-64 flex-col bg-white px-4 py-6 shadow-premium">
             <div className="mb-8 flex items-center justify-between px-2">
-              <span className="text-lg font-bold gradient-text">TTS Gemini</span>
+              <span className="text-lg font-bold gradient-text">Digiswara</span>
               <button
                 onClick={() => setSidebarOpen(false)}
                 className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
@@ -119,7 +119,7 @@ const Layout = ({ children }) => {
           >
             <Bars3Icon className="h-6 w-6" />
           </button>
-          <span className="font-bold gradient-text">TTS Gemini</span>
+          <span className="font-bold gradient-text">Digiswara</span>
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">

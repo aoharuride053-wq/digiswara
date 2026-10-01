@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { PURCHASE_URL } from '../../lib/links';
 import toast from 'react-hot-toast';
 import {
   SpeakerWaveIcon,
@@ -13,13 +14,7 @@ const inputClass =
   'w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 placeholder-slate-400 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-100';
 
 const MAX_FILE_SIZE = 8 * 1024 * 1024; // 8MB, selaras dengan batas backend
-const ALLOWED_TYPES = [
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif'
-];
+const ALLOWED_TYPES = ['application/pdf'];
 
 const ANALYSIS_STEPS = [
   'Mengunggah invoice...',
@@ -31,8 +26,8 @@ const ANALYSIS_STEPS = [
 
 // Pesan ramah untuk kode error dari backend.
 const ERROR_MESSAGES = {
-  INVOICE_REQUIRED: 'Upload file invoice (PDF atau gambar) terlebih dahulu.',
-  INVALID_FILE_TYPE: 'Format file harus PDF, PNG, JPG, JPEG, WEBP, atau GIF.',
+  INVOICE_REQUIRED: 'Upload file invoice PDF terlebih dahulu.',
+  INVALID_FILE_TYPE: 'Format invoice harus PDF.',
   FILE_TOO_LARGE: 'Ukuran file maksimal 8MB. Kompres dulu filenya.',
   NOT_AN_INVOICE: 'File ini bukan invoice Lynk.id. Upload invoice yang dikirim ke email kamu.',
   REF_NOT_FOUND: 'REF ID 32 karakter tidak ditemukan di invoice. Pastikan upload invoice asli dari Lynk.id.',
@@ -68,8 +63,8 @@ const RegisterPage = () => {
 
   const validateFile = (candidate) => {
     if (!candidate) return 'File tidak ditemukan.';
-    if (!ALLOWED_TYPES.includes(candidate.type)) {
-      return 'Format file harus PDF, PNG, JPG, JPEG, WEBP, atau GIF.';
+    if (!candidate.name.toLowerCase().endsWith('.pdf') || !ALLOWED_TYPES.includes(candidate.type)) {
+      return 'Format invoice harus PDF.';
     }
     if (candidate.size > MAX_FILE_SIZE) {
       return 'Ukuran file maksimal 8MB.';
@@ -150,7 +145,7 @@ const RegisterPage = () => {
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-secondary-500 shadow-lg">
               <SpeakerWaveIcon className="h-6 w-6 text-white" />
             </span>
-            <span className="text-2xl font-bold gradient-text">TTS Gemini</span>
+            <span className="text-2xl font-bold gradient-text">Digiswara</span>
           </Link>
         </div>
 
@@ -235,16 +230,23 @@ const RegisterPage = () => {
             <>
               <h1 className="text-2xl font-bold text-slate-900">Aktivasi Akun Pembelian</h1>
               <p className="mt-1 text-sm text-slate-500">
-                Beli di <span className="font-semibold">Lynk.id</span>? Upload invoice
-                yang dikirim ke Gmail kamu untuk membuat akun.
+                Beli akses Digiswara di Lynk.id, unduh invoice dari email pembelian, lalu unggah di sini untuk mendapatkan akun.
               </p>
 
-              {/* Langkah singkat */}
-              <ol className="mt-4 space-y-1.5 rounded-2xl bg-slate-50 p-4 text-xs text-slate-600">
-                <li>1. Beli produk di Lynk.id &amp; selesaikan pembayaran.</li>
-                <li>2. Invoice (PDF/gambar) dikirim Lynk.id ke email Gmail kamu.</li>
-                <li>3. Upload invoice di sini — REF ID-nya diverifikasi otomatis.</li>
-                <li>4. Username &amp; password dikirim balik ke email kamu.</li>
+              <a
+                href={PURCHASE_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primary-700"
+              >
+                Beli akses di Lynk.id
+              </a>
+
+              <ol className="mt-5 space-y-3 border-l-2 border-primary-200 pl-4 text-sm text-slate-600">
+                <li><strong>1. Beli akses</strong> melalui Lynk.id dan selesaikan pembayaran.</li>
+                <li><strong>2. Unduh invoice</strong> dari email yang digunakan saat membeli. Periksa folder Spam jika belum masuk.</li>
+                <li><strong>3. Masukkan email pembelian</strong> yang sama dan unggah file invoice di halaman ini.</li>
+                <li><strong>4. Tunggu verifikasi</strong>; username dan password akan dikirim ke email pembeli.</li>
               </ol>
 
               {error && (
@@ -279,7 +281,7 @@ const RegisterPage = () => {
 
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-slate-700">
-                    Upload Invoice (PDF / Gambar) *
+                    Upload Invoice (PDF) *
                   </label>
                   <div
                     onDragOver={(e) => {
@@ -309,14 +311,14 @@ const RegisterPage = () => {
                           Klik atau drag &amp; drop invoice ke sini
                         </p>
                         <p className="mt-0.5 text-xs text-slate-400">
-                          PDF, PNG, JPG, JPEG, WEBP — maksimal 8MB
+                          Hanya PDF — maksimal 8MB
                         </p>
                       </>
                     )}
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept=".pdf,.png,.jpg,.jpeg,.webp,.gif"
+                      accept=".pdf,application/pdf"
                       className="hidden"
                       onChange={(e) => {
                         if (e.target.files && e.target.files[0]) {

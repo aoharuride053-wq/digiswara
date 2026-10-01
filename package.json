@@ -12,6 +12,7 @@
     "test:history-retention": "node scripts/smoke-history-retention.js",
     "test:registration": "node scripts/smoke-registration.js",
     "test:mongodb-outage": "node scripts/smoke-mongodb-outage.js",
+    "test:password-reset": "node scripts/smoke-password-reset.js",
     "test:device-limit": "node scripts/smoke-device-limit.js",
     "test:smoke": "node scripts/smoke-test.js",
     "test:cleanup": "node scripts/cleanup-test-data.js",

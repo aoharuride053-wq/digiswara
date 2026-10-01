@@ -1,0 +1,1 @@
+export const PURCHASE_URL = 'https://lynk.id/shiroihana/q2o51nnn2zz8';

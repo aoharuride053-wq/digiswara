@@ -51,14 +51,75 @@ const escapeHtml = (value) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-// Email berisi username + password akun hasil registrasi dari invoice.
-const sendCredentialsEmail = async ({ to, username, password, loginUrl }) => {
+const deliverEmail = async (message) => {
   if (!isSmtpConfigured()) {
-    const error = new Error('SMTP belum dikonfigurasi (SMTP_HOST/SMTP_USER/SMTP_PASS).');
+    const error = new Error('Email belum dikonfigurasi.');
     error.code = 'SMTP_NOT_CONFIGURED';
     throw error;
   }
 
+  if (isResendSmtp()) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getResendApiKey()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(20000)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Resend API error (${response.status}): ${result.message || result.name || 'Email tidak dapat dikirim.'}`);
+    }
+    return result;
+  }
+
+  return getTransporter().sendMail(message);
+};
+
+const sendPasswordResetEmail = async ({ to, resetUrl }) => {
+  const message = {
+    from: getMailFrom(),
+    to,
+    subject: 'Verifikasi penggantian password Digiswara',
+    html: `
+<!DOCTYPE html>
+<html lang="id">
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr><td align="center" style="padding:32px 16px;">
+      <table role="presentation" width="100%" style="max-width:520px;background:#ffffff;border-radius:12px;border:1px solid #e2e8f0;">
+        <tr><td style="padding:28px;color:#334155;font-size:14px;line-height:1.7;">
+          <h1 style="margin-top:0;color:#0f172a;font-size:21px;">Ganti password Digiswara</h1>
+          <p>Gunakan tombol berikut untuk memverifikasi permintaan dan membuat password baru.</p>
+          <p style="margin:24px 0;">
+            <a href="${escapeHtml(resetUrl)}" style="display:inline-block;padding:12px 20px;border-radius:8px;background:#0284c7;color:#ffffff;text-decoration:none;font-weight:bold;">Verifikasi dan ganti password</a>
+          </p>
+          <p>Tautan berlaku selama 30 menit dan hanya dapat digunakan satu kali.</p>
+          <p style="color:#64748b;font-size:12px;">Jika kamu tidak meminta penggantian password, abaikan email ini.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`.trim(),
+    text: [
+      'Ganti password Digiswara',
+      '',
+      'Buka tautan berikut untuk memverifikasi permintaan dan membuat password baru:',
+      resetUrl,
+      '',
+      'Tautan berlaku selama 30 menit dan hanya dapat digunakan satu kali.',
+      'Jika kamu tidak meminta penggantian password, abaikan email ini.'
+    ].join('\n')
+  };
+
+  return deliverEmail(message);
+};
+
+// Email berisi username + password akun hasil registrasi dari invoice.
+const sendCredentialsEmail = async ({ to, username, password, loginUrl }) => {
   const from = getMailFrom();
   const appUrl = loginUrl || process.env.APP_URL || 'http://localhost:3000';
   const html = `
@@ -130,27 +191,11 @@ const sendCredentialsEmail = async ({ to, username, password, loginUrl }) => {
     text
   };
 
-  if (isResendSmtp()) {
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${getResendApiKey()}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(message),
-      signal: AbortSignal.timeout(20000)
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`Resend API error (${response.status}): ${result.message || result.name || 'Email tidak dapat dikirim.'}`);
-    }
-    return result;
-  }
-
-  return getTransporter().sendMail(message);
+  return deliverEmail(message);
 };
 
 module.exports = {
   isSmtpConfigured,
-  sendCredentialsEmail
+  sendCredentialsEmail,
+  sendPasswordResetEmail
 };

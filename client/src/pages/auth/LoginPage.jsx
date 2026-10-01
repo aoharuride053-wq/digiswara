@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { SpeakerWaveIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import { PURCHASE_URL } from '../../lib/links';
 
 const LoginPage = () => {
   const { login } = useAuth();
@@ -33,7 +34,7 @@ const LoginPage = () => {
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-secondary-500 shadow-lg">
               <SpeakerWaveIcon className="h-6 w-6 text-white" />
             </span>
-            <span className="text-2xl font-bold gradient-text">TTS Gemini</span>
+            <span className="text-2xl font-bold gradient-text">Digiswara</span>
           </Link>
         </div>
 
@@ -99,17 +100,28 @@ const LoginPage = () => {
             </button>
           </form>
 
+          <Link
+            to="/forgot-password"
+            className="mt-4 block text-right text-sm font-medium text-primary-600 hover:text-primary-700"
+          >
+            Lupa password?
+          </Link>
+
           <p className="mt-6 text-center text-sm text-slate-500">
             Belum punya akun?{' '}
             <Link to="/register" className="font-semibold text-primary-600 hover:text-primary-700">
-              Daftar gratis
+              Daftar dengan invoice
             </Link>
           </p>
+          <a
+            href={PURCHASE_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-3 block text-center text-sm font-medium text-primary-600 hover:text-primary-700"
+          >
+            Belum membeli? Beli akses di Lynk.id
+          </a>
         </div>
-
-        <p className="mt-6 text-center text-xs text-slate-400">
-          Powered by Gemini TTS API
-        </p>
       </div>
     </div>
   );

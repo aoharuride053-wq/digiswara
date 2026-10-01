@@ -6,13 +6,7 @@ const { PDFParse } = require('pdf-parse');
 const TOKENHARBOR_BASE_URL = (process.env.TOKENHARBOR_BASE_URL || 'https://tokenharbor.ai/v1').replace(/\/$/, '');
 const TOKENHARBOR_API_KEY = (process.env.TOKENHARBOR_API_KEY || '').trim();
 
-const ALLOWED_MIME_TYPES = new Set([
-  'application/pdf',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif'
-]);
+const ALLOWED_MIME_TYPES = new Set(['application/pdf']);
 
 const RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -204,7 +198,7 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
 };
 async function extractInvoiceData({ base64Data, mimeType }) {
   if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-    const error = new Error('Format file harus PDF, PNG, JPG, JPEG, WEBP, atau GIF.');
+    const error = new Error('Format invoice harus PDF.');
     error.code = 'INVALID_FILE_TYPE';
     throw error;
   }
