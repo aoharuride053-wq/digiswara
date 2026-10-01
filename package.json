@@ -1,0 +1,43 @@
+{
+  "name": "text-to-speech-gemini",
+  "version": "1.0.0",
+  "description": "Text to Speech Application with Gemini API - Multiple voices and character models",
+  "scripts": {
+    "client": "cd client && npm start",
+    "server": "nodemon server/index.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "dev:webhook": "concurrently -k \"npm run server\" \"npm run client\" \"npm exec --yes --package=localtunnel -- lt --port 5000\"",
+    "dev:webhook:cloudflare": "concurrently -k \"npm run server\" \"npm run client\" \"node scripts/run-cloudflare-tunnel.js\"",
+    "build": "cd client && npm run build",
+    "test:history-retention": "node scripts/smoke-history-retention.js",
+    "test:registration": "node scripts/smoke-registration.js",
+    "test:device-limit": "node scripts/smoke-device-limit.js",
+    "test:smoke": "node scripts/smoke-test.js",
+    "test:cleanup": "node scripts/cleanup-test-data.js",
+    "start": "node server/index.js"
+  },
+  "keywords": [
+    "text-to-speech",
+    "tts",
+    "gemini",
+    "ai",
+    "voice"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-session": "^1.17.3",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^10.0.13",
+    "pdf-parse": "^2.4.5",
+    "sqlite3": "^5.1.7"
+  }
+}

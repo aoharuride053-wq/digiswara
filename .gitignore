@@ -1,0 +1,32 @@
+node_modules/
+client/node_modules/
+
+# Jangan commit kredensial
+.env
+client/.env
+.env.example
+
+# Database SQLite dan file audio hasil generate
+database/*.db
+database/*.db-journal
+public/audio/*
+
+# Berkas sementara / debug / verifikasi
+chk*.txt
+checks.txt
+imports-read.txt
+progress.txt
+*.log
+*.pid.txt
+.server-pid.txt
+.dev-pids.json
+
+# Build output
+client/build/
+build/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
