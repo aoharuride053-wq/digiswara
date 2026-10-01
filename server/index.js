@@ -22,6 +22,7 @@ const devices = require('./devices');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const refLogTag = (refId) => crypto.createHash('sha256').update(String(refId || '')).digest('hex').slice(0, 12);
 const HISTORY_TTL_MS = 5 * 60 * 1000;
 const allowedClientOrigins = (process.env.CLIENT_ORIGINS
   || 'http://localhost:3000,http://127.0.0.1:3000')
@@ -432,13 +433,10 @@ app.post('/api/login', (req, res) => {
 app.post('/api/webhook/lynk', (req, res) => {
   try {
     const payload = req.body;
-    console.log(`[webhook:lynk] ${new Date().toISOString()} request diterima`);
-    console.log('[webhook:lynk] headers:', JSON.stringify(req.headers));
-    console.log(
-      '[webhook:lynk] X-Signature:', req.headers['x-signature'] || '(missing)',
-      '| X-Lynk-Signature:', req.headers['x-lynk-signature'] || '(missing)'
-    );
-    console.log('[webhook:lynk] raw body:', JSON.stringify(payload));
+    const signatureHeader = req.headers['x-signature']
+      ? 'x-signature'
+      : req.headers['x-lynk-signature'] ? 'x-lynk-signature' : 'missing';
+    console.log(`[webhook:lynk] ${new Date().toISOString()} request diterima signatureHeader=${signatureHeader}`);
 
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       return res.status(400).json({ success: false, message: 'Payload kosong atau tidak valid.' });
@@ -448,8 +446,9 @@ app.post('/api/webhook/lynk', (req, res) => {
     const signature = req.headers['x-signature'] || req.headers['x-lynk-signature'];
 
     const parsed = parseLynkPayload(payload);
+    const refTag = refLogTag(parsed.refId);
     console.log(
-      `[webhook:lynk] parsed: refId=${parsed.refId} amount=${parsed.amount} statusRaw=${parsed.statusRaw} isPaid=${parsed.isPaid} messageIds=${JSON.stringify(parsed.messageIdCandidates)}`
+      `[webhook:lynk] parsed: refTag=${refTag} refIdLength=${parsed.refId.length} amount=${parsed.amount} statusRaw=${parsed.statusRaw} isPaid=${parsed.isPaid} messageIdCount=${parsed.messageIdCandidates.length}`
     );
 
     if (!merchantKey) {
@@ -466,7 +465,8 @@ app.post('/api/webhook/lynk', (req, res) => {
       reason: verify.reason,
       signaturePresent: Boolean(signature),
       merchantKeyConfigured: Boolean(merchantKey),
-      refId: parsed.refId,
+      refTag,
+      refIdLength: parsed.refId.length,
       amount: parsed.amount,
       statusRaw: parsed.statusRaw
     }));
@@ -476,14 +476,14 @@ app.post('/api/webhook/lynk', (req, res) => {
     }
 
     if (!isValidRefId(parsed.refId)) {
-      console.warn('Webhook Lynk.id tanpa REF ID 32 karakter:', JSON.stringify(payload).slice(0, 500));
+      console.warn(`[webhook:lynk] REF ID tidak valid refTag=${refTag} refIdLength=${parsed.refId.length}`);
       return res.status(422).json({
         success: false,
         message: 'REF ID 32 karakter tidak ditemukan di payload.'
       });
     }
 
-    console.log(`[webhook:lynk] sebelum upsertTransaction: ref=${parsed.refId} amount=${parsed.amount} status=${parsed.statusRaw}`);
+    console.log(`[webhook:lynk] sebelum upsertTransaction: refTag=${refTag} amount=${parsed.amount} status=${parsed.statusRaw}`);
     upsertTransaction(
       db,
       { ...parsed, rawPayload: payload },
@@ -493,9 +493,9 @@ app.post('/api/webhook/lynk', (req, res) => {
           console.error('Webhook Lynk.id gagal menyimpan transaksi:', err.message);
           return res.status(500).json({ success: false, message: 'Gagal menyimpan transaksi.' });
         }
-        console.log(`[webhook:lynk] setelah upsertTransaction: berhasil menyimpan ref=${parsed.refId}`);
+        console.log(`[webhook:lynk] setelah upsertTransaction: berhasil menyimpan refTag=${refTag}`);
         console.log(
-          `Webhook Lynk.id diterima: ref=${parsed.refId} paid=${parsed.isPaid} status=${parsed.statusRaw || 'missing'} product=${parsed.productTitle || '-'} email=${parsed.email || '-'}`
+          `Webhook Lynk.id diterima: refTag=${refTag} paid=${parsed.isPaid} status=${parsed.statusRaw || 'missing'} product=${parsed.productTitle || '-'}`
         );
         res.json({ success: true, refId: parsed.refId, isPaid: parsed.isPaid });
       }
@@ -625,8 +625,8 @@ app.post('/api/register/invoice', async (req, res) => {
     }
 
     // --- Cek transaksi dari webhook Lynk.id ---
-    console.log(`[register:invoice] ${new Date().toISOString()} extracted.refId=${extracted.refId} (length=${String(extracted.refId).length})`);
-    console.log(`[register:invoice] ${new Date().toISOString()} query getTransactionByRef ref=${extracted.refId}`);
+    const refTag = refLogTag(extracted.refId);
+    console.log(`[register:invoice] ${new Date().toISOString()} query getTransactionByRef refTag=${refTag} refIdLength=${String(extracted.refId).length}`);
     const transaction = await new Promise((resolve, reject) => {
       getTransactionByRef(db, extracted.refId, (err, row) =>
         err ? reject(err) : resolve(row)
@@ -636,9 +636,7 @@ app.post('/api/register/invoice', async (req, res) => {
       console.log(
         `[register:invoice] ${new Date().toISOString()} transaksi ditemukan:`,
         JSON.stringify({
-          ref_id: transaction.ref_id,
-          email: transaction.email,
-          product_title: transaction.product_title,
+          refTag,
           amount: transaction.amount,
           status: transaction.status,
           is_paid: transaction.is_paid,
@@ -646,7 +644,7 @@ app.post('/api/register/invoice', async (req, res) => {
         })
       );
     } else {
-      console.warn(`[register:invoice] ${new Date().toISOString()} transaksi TIDAK ditemukan untuk ref=${extracted.refId}`);
+      console.warn(`[register:invoice] ${new Date().toISOString()} transaksi TIDAK ditemukan untuk refTag=${refTag}`);
     }
 
     if (!transaction) {
