@@ -249,24 +249,56 @@ const safeEqualHex = (a, b) => {
 
 // Verifikasi header X-Signature terhadap Merchant Key dari dashboard Lynk.id.
 const verifyLynkSignature = ({ payload, signature, merchantKey, parsed }) => {
-  if (!signature) return { ok: false, reason: 'signature_missing' };
-  if (!merchantKey) return { ok: false, reason: 'merchant_key_missing' };
+  const tag = '[lynk:verify]';
+  console.log(`${tag} raw signature header:`, signature === undefined ? '(undefined)' : JSON.stringify(signature));
+  console.log(`${tag} merchantKey present: ${Boolean(merchantKey)} (length=${merchantKey ? String(merchantKey).length : 0})`);
+
+  if (!signature) {
+    console.warn(`${tag} result: signature_missing`);
+    return { ok: false, reason: 'signature_missing' };
+  }
+  if (!merchantKey) {
+    console.warn(`${tag} result: merchant_key_missing`);
+    return { ok: false, reason: 'merchant_key_missing' };
+  }
 
   const info = parsed || parseLynkPayload(payload);
+  console.log(
+    `${tag} parsed payload values:`,
+    JSON.stringify({
+      amount: info.amount,
+      refId: info.refId,
+      messageIdCandidates: info.messageIdCandidates
+    })
+  );
+
   const combos = buildSignatureCandidates({
     amount: info.amount,
     refId: info.refId,
     messageIdCandidates: info.messageIdCandidates
   });
 
-  if (!combos.length) return { ok: false, reason: 'no_candidate' };
+  console.log(`${tag} signature candidates (${combos.length}, tanpa merchant key):`, JSON.stringify(combos));
 
-  for (const combo of combos) {
+  if (!combos.length) {
+    console.warn(`${tag} result: no_candidate (amount=${info.amount}, refId=${info.refId ? 'present' : 'missing'})`);
+    return { ok: false, reason: 'no_candidate' };
+  }
+
+  const normalizedSignature = String(signature).trim().toLowerCase();
+  console.log(`${tag} normalized signature:`, normalizedSignature);
+
+  for (let i = 0; i < combos.length; i += 1) {
+    const combo = combos[i];
     const expected = sha256Hex(combo + merchantKey);
-    if (safeEqualHex(expected, String(signature).trim().toLowerCase())) {
+    const matched = safeEqualHex(expected, normalizedSignature);
+    console.log(`${tag} candidate #${i} input="${combo}"+<merchantKey> sha256=${expected} match=${matched}`);
+    if (matched) {
+      console.log(`${tag} result: ok (matched candidate #${i} input="${combo}")`);
       return { ok: true, reason: 'ok' };
     }
   }
+  console.warn(`${tag} result: signature_mismatch (tidak ada dari ${combos.length} kandidat yang cocok)`);
   return { ok: false, reason: 'signature_mismatch' };
 };
 

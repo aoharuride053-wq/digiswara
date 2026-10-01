@@ -432,6 +432,14 @@ app.post('/api/login', (req, res) => {
 app.post('/api/webhook/lynk', (req, res) => {
   try {
     const payload = req.body;
+    console.log(`[webhook:lynk] ${new Date().toISOString()} request diterima`);
+    console.log('[webhook:lynk] headers:', JSON.stringify(req.headers));
+    console.log(
+      '[webhook:lynk] X-Signature:', req.headers['x-signature'] || '(missing)',
+      '| X-Lynk-Signature:', req.headers['x-lynk-signature'] || '(missing)'
+    );
+    console.log('[webhook:lynk] raw body:', JSON.stringify(payload));
+
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       return res.status(400).json({ success: false, message: 'Payload kosong atau tidak valid.' });
     }
@@ -440,6 +448,9 @@ app.post('/api/webhook/lynk', (req, res) => {
     const signature = req.headers['x-signature'] || req.headers['x-lynk-signature'];
 
     const parsed = parseLynkPayload(payload);
+    console.log(
+      `[webhook:lynk] parsed: refId=${parsed.refId} amount=${parsed.amount} statusRaw=${parsed.statusRaw} isPaid=${parsed.isPaid} messageIds=${JSON.stringify(parsed.messageIdCandidates)}`
+    );
 
     if (!merchantKey) {
       return res.status(500).json({
@@ -450,6 +461,15 @@ app.post('/api/webhook/lynk', (req, res) => {
     }
 
     const verify = verifyLynkSignature({ payload, signature, merchantKey, parsed });
+    console.log('[webhook:lynk] verifyLynkSignature result:', JSON.stringify({
+      ok: verify.ok,
+      reason: verify.reason,
+      signaturePresent: Boolean(signature),
+      merchantKeyConfigured: Boolean(merchantKey),
+      refId: parsed.refId,
+      amount: parsed.amount,
+      statusRaw: parsed.statusRaw
+    }));
     if (!verify.ok) {
       console.warn(`Webhook Lynk.id ditolak (${verify.reason}).`);
       return res.status(401).json({ success: false, message: 'Signature tidak valid.' });
@@ -463,14 +483,17 @@ app.post('/api/webhook/lynk', (req, res) => {
       });
     }
 
+    console.log(`[webhook:lynk] sebelum upsertTransaction: ref=${parsed.refId} amount=${parsed.amount} status=${parsed.statusRaw}`);
     upsertTransaction(
       db,
       { ...parsed, rawPayload: payload },
       (err) => {
         if (err) {
+          console.error('[webhook:lynk] upsertTransaction gagal:', err.message);
           console.error('Webhook Lynk.id gagal menyimpan transaksi:', err.message);
           return res.status(500).json({ success: false, message: 'Gagal menyimpan transaksi.' });
         }
+        console.log(`[webhook:lynk] setelah upsertTransaction: berhasil menyimpan ref=${parsed.refId}`);
         console.log(
           `Webhook Lynk.id diterima: ref=${parsed.refId} paid=${parsed.isPaid} status=${parsed.statusRaw || 'missing'} product=${parsed.productTitle || '-'} email=${parsed.email || '-'}`
         );
@@ -602,11 +625,29 @@ app.post('/api/register/invoice', async (req, res) => {
     }
 
     // --- Cek transaksi dari webhook Lynk.id ---
+    console.log(`[register:invoice] ${new Date().toISOString()} extracted.refId=${extracted.refId} (length=${String(extracted.refId).length})`);
+    console.log(`[register:invoice] ${new Date().toISOString()} query getTransactionByRef ref=${extracted.refId}`);
     const transaction = await new Promise((resolve, reject) => {
       getTransactionByRef(db, extracted.refId, (err, row) =>
         err ? reject(err) : resolve(row)
       );
     });
+    if (transaction) {
+      console.log(
+        `[register:invoice] ${new Date().toISOString()} transaksi ditemukan:`,
+        JSON.stringify({
+          ref_id: transaction.ref_id,
+          email: transaction.email,
+          product_title: transaction.product_title,
+          amount: transaction.amount,
+          status: transaction.status,
+          is_paid: transaction.is_paid,
+          received_at: transaction.received_at
+        })
+      );
+    } else {
+      console.warn(`[register:invoice] ${new Date().toISOString()} transaksi TIDAK ditemukan untuk ref=${extracted.refId}`);
+    }
 
     if (!transaction) {
       return res.status(404).json({
