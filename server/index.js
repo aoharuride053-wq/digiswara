@@ -68,7 +68,10 @@ app.use(session({
 }));
 
 // Database setup
-const dbPath = process.env.DB_PATH || './database/app.db';
+const RAILWAY_VOLUME_MOUNT_PATH = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+const dbPath = process.env.DB_PATH || (RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(RAILWAY_VOLUME_MOUNT_PATH, 'app.db')
+  : './database/app.db');
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
@@ -179,7 +182,9 @@ db.serialize(() => {
   `);
 });
 // Direktori penyimpanan file audio hasil generate (di-serve sebagai static file)
-const AUDIO_DIR = process.env.AUDIO_DIR || path.join(__dirname, '..', 'public', 'audio');
+const AUDIO_DIR = process.env.AUDIO_DIR || (RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(RAILWAY_VOLUME_MOUNT_PATH, 'audio')
+  : path.join(__dirname, '..', 'public', 'audio'));
 if (!fs.existsSync(AUDIO_DIR)) {
   fs.mkdirSync(AUDIO_DIR, { recursive: true });
 }
@@ -1381,6 +1386,10 @@ function normalizeGeminiAudio(rawBuffer, mimeType) {
 // Start server
 const server = app.listen(PORT, () => {
   console.log(`Server berjalan di http://localhost:${PORT}`);
+  console.log(`SQLite database path: ${dbPath}`);
+  if (!RAILWAY_VOLUME_MOUNT_PATH && !process.env.DB_PATH) {
+    console.warn('Railway Volume tidak terdeteksi; SQLite berada di filesystem lokal dan dapat hilang saat redeploy/restart.');
+  }
   console.log(`Model Gemini TTS fallback order: ${GEMINI_TTS_MODEL_ORDER.map((model) => model.id).join(' -> ')}`);
   console.log(`Model naskah Voice Over Xkiro: ${XKIRO_VOICEOVER_MODELS.join(' -> ')}`);
   console.log(process.env.XKIRO_API_KEY ? 'XKIRO_API_KEY: terdeteksi' : 'XKIRO_API_KEY: BELUM DIISI');
