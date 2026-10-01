@@ -4,6 +4,7 @@ const { normalizeRefId, isValidRefId, extractEmail } = require('./lynk');
 const { PDFParse } = require('pdf-parse');
 
 const TOKENHARBOR_BASE_URL = (process.env.TOKENHARBOR_BASE_URL || 'https://tokenharbor.ai/v1').replace(/\/$/, '');
+const TOKENHARBOR_API_KEY = (process.env.TOKENHARBOR_API_KEY || '').trim();
 
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
@@ -109,7 +110,7 @@ const parseModelJson = (content) => {
 };
 
 const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
-  if (!process.env.TOKENHARBOR_API_KEY) {
+  if (!TOKENHARBOR_API_KEY) {
     const error = new Error('TOKENHARBOR_API_KEY belum diisi di file .env.');
     error.code = 'TOKENHARBOR_KEY_MISSING';
     throw error;
@@ -122,7 +123,7 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
       response = await fetch(`${TOKENHARBOR_BASE_URL}/chat/completions`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${process.env.TOKENHARBOR_API_KEY}`,
+          Authorization: `Bearer ${TOKENHARBOR_API_KEY}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -156,10 +157,15 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
         // Keep the provider response when it is not JSON.
       }
       lastError = new Error(`TokenHarbor ${model} (${response.status}): ${detail}`);
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         lastError.code = 'TOKENHARBOR_AUTH_FAILED';
         lastError.status = response.status;
         throw lastError;
+      }
+      if (response.status === 403) {
+        lastError.code = 'TOKENHARBOR_MODEL_FORBIDDEN';
+        lastError.status = response.status;
+        continue;
       }
       continue;
     }

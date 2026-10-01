@@ -44,7 +44,7 @@ const ERROR_MESSAGES = {
   RATE_LIMITED: 'Terlalu banyak percobaan. Coba lagi dalam satu jam.',
   EMAIL_FAILED: 'Gagal mengirim email kredensial. Coba lagi nanti.',
   TOKENHARBOR_KEY_MISSING: 'Server belum mengatur TOKENHARBOR_API_KEY di .env.',
-  TOKENHARBOR_AUTH_FAILED: 'API key TokenHarbor ditolak. Periksa key di .env lalu restart backend.',
+  TOKENHARBOR_AUTH_FAILED: 'TokenHarbor menolak autentikasi (401). Periksa TOKENHARBOR_API_KEY di environment backend, lalu restart atau redeploy.',
   TOKENHARBOR_VISION_FAILED: 'Semua model TokenHarbor gagal membaca invoice. Periksa log backend untuk detailnya.',
   PDF_RENDER_FAILED: 'PDF scan tidak dapat dirender. Coba unggah invoice sebagai gambar atau PDF lain.',
   REQUEST_TIMEOUT: 'Analisis invoice terlalu lama. Coba unggah lagi.',
