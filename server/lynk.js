@@ -272,6 +272,10 @@ const verifyLynkSignature = ({ payload, signature, merchantKey, parsed }) => {
 
 // Simpan / perbarui transaksi dari webhook.
 const upsertTransaction = (db, tx, callback) => {
+  const isPaidValue = tx.isPaid ? 1 : 0;
+  console.log(
+    `[${new Date().toISOString()}] [lynk] upsertTransaction: menyimpan ref=${tx.refId} is_paid=${isPaidValue} status=${tx.statusRaw || 'missing'} email=${tx.email || '-'}`
+  );
   db.run(
     `INSERT INTO lynk_transactions
        (ref_id, message_id, email, customer_name, product_title, amount, status, is_paid, raw_payload)
@@ -294,15 +298,45 @@ const upsertTransaction = (db, tx, callback) => {
       tx.productTitle,
       tx.amount,
       tx.statusRaw,
-      tx.isPaid ? 1 : 0,
+      isPaidValue,
       JSON.stringify(tx.rawPayload)
     ],
-    callback
+    function onUpsertDone(err) {
+      const changes = this && typeof this.changes === 'number' ? this.changes : null;
+      if (err) {
+        console.error(
+          `[${new Date().toISOString()}] [lynk] upsertTransaction GAGAL: ref=${tx.refId} error=${err.message}`
+        );
+      } else {
+        console.log(
+          `[${new Date().toISOString()}] [lynk] upsertTransaction BERHASIL: ref=${tx.refId} is_paid=${isPaidValue} rowsChanged=${changes} lastID=${this && this.lastID}`
+        );
+      }
+      if (typeof callback === 'function') callback.call(this, err, { changes });
+    }
   );
 };
 
 const getTransactionByRef = (db, refId, callback) => {
-  db.get('SELECT * FROM lynk_transactions WHERE ref_id = ?', [refId], callback);
+  console.log(
+    `[${new Date().toISOString()}] [lynk] getTransactionByRef: mencari ref=${refId} (length=${String(refId || '').length})`
+  );
+  db.get('SELECT * FROM lynk_transactions WHERE ref_id = ?', [refId], (err, row) => {
+    if (err) {
+      console.error(
+        `[${new Date().toISOString()}] [lynk] getTransactionByRef GAGAL: ref=${refId} error=${err.message}`
+      );
+    } else if (row) {
+      console.log(
+        `[${new Date().toISOString()}] [lynk] getTransactionByRef DITEMUKAN: ref=${refId} is_paid=${row.is_paid} status=${row.status || '-'} received_at=${row.received_at || '-'}`
+      );
+    } else {
+      console.warn(
+        `[${new Date().toISOString()}] [lynk] getTransactionByRef TIDAK DITEMUKAN: ref=${refId}`
+      );
+    }
+    if (typeof callback === 'function') callback(err, row);
+  });
 };
 
 module.exports = {

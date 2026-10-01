@@ -463,14 +463,20 @@ app.post('/api/webhook/lynk', (req, res) => {
       });
     }
 
+    console.log(
+      `[${new Date().toISOString()}] Webhook Lynk.id: akan menyimpan transaksi ref=${parsed.refId} is_paid=${parsed.isPaid ? 1 : 0} status=${parsed.statusRaw || 'missing'}`
+    );
     upsertTransaction(
       db,
       { ...parsed, rawPayload: payload },
-      (err) => {
+      (err, result) => {
         if (err) {
           console.error('Webhook Lynk.id gagal menyimpan transaksi:', err.message);
           return res.status(500).json({ success: false, message: 'Gagal menyimpan transaksi.' });
         }
+        console.log(
+          `[${new Date().toISOString()}] Webhook Lynk.id: transaksi tersimpan ref=${parsed.refId} rowsAffected=${result && result.changes}`
+        );
         console.log(
           `Webhook Lynk.id diterima: ref=${parsed.refId} paid=${parsed.isPaid} status=${parsed.statusRaw || 'missing'} product=${parsed.productTitle || '-'} email=${parsed.email || '-'}`
         );
@@ -602,19 +608,38 @@ app.post('/api/register/invoice', async (req, res) => {
     }
 
     // --- Cek transaksi dari webhook Lynk.id ---
+    console.log(
+      `[${new Date().toISOString()}] Registrasi invoice: mencari transaksi untuk ref=${extracted.refId}`
+    );
     const transaction = await new Promise((resolve, reject) => {
       getTransactionByRef(db, extracted.refId, (err, row) =>
         err ? reject(err) : resolve(row)
       );
     });
+    console.log(
+      `[${new Date().toISOString()}] Registrasi invoice: hasil transaksi ref=${extracted.refId}`,
+      transaction
+        ? JSON.stringify({
+            email: transaction.email,
+            is_paid: transaction.is_paid,
+            status: transaction.status
+          })
+        : 'null'
+    );
 
     if (!transaction) {
+      console.warn(
+        `[${new Date().toISOString()}] Registrasi invoice: transaksi TIDAK DITEMUKAN untuk ref=${extracted.refId}`
+      );
       return res.status(404).json({
         message: 'Pembayaran dengan REF ID ini belum diterima. Pastikan pembayaran selesai di Lynk.id lalu coba lagi beberapa saat.',
         code: 'REF_NOT_REGISTERED'
       });
     }
     if (!transaction.is_paid) {
+      console.warn(
+        `[${new Date().toISOString()}] Registrasi invoice: transaksi ditemukan tetapi is_paid !== 1 (is_paid=${transaction.is_paid}, status=${transaction.status || '-'}) ref=${extracted.refId}`
+      );
       return res.status(402).json({
         message: 'Pembayaran belum dikonfirmasi oleh Lynk.id.',
         code: 'NOT_PAID'
