@@ -84,23 +84,22 @@ bukan hanya dari tulisan “PAID” pada invoice.
 
 ### 2. Siapkan provider email transaksional
 
-Mailer memakai SMTP standar, jadi provider bisa diganti tanpa mengubah kode.
-Contoh berikut memakai Resend; verifikasi domain pengirim di dashboard Resend
-terlebih dahulu. Alamat `MAIL_FROM` harus memakai domain yang sudah diverifikasi.
+Mailer memakai Resend melalui HTTPS API jika `SMTP_HOST=smtp.resend.com`, sehingga
+tidak memerlukan koneksi SMTP keluar dari Railway. Provider SMTP lain tetap bisa
+digunakan. Verifikasi domain pengirim di dashboard Resend terlebih dahulu; alamat
+`MAIL_FROM` harus memakai domain yang sudah diverifikasi.
 
 1. Isi di `.env`:
 
-   ```env
+  ```env
   SMTP_HOST=smtp.resend.com
-   SMTP_PORT=465
-  SMTP_USER=resend
-  SMTP_PASS=api_key_resend
-  MAIL_FROM="TTS Gemini <noreply@domain-terverifikasi.com>"
-   APP_URL=https://domain-anda.com
+  RESEND_API_KEY=re_api_key_dari_resend
+  MAIL_FROM=noreply@domain-terverifikasi.com
+  APP_URL=https://domain-anda.com
    ```
 
-2. Resend menyediakan SMTP di `smtp.resend.com`; gunakan username `resend` dan
-  API key sebagai password SMTP. Simpan API key hanya di `.env`.
+2. Simpan `RESEND_API_KEY` sebagai secret di Railway Variables atau `.env` lokal;
+  jangan commit API key ke Git.
 
 3. Alternatif SMTP lain: Brevo dan Postmark. Buat/verify sender domain, lalu
   salin host, port, username, password/token SMTP dari dashboard provider ke

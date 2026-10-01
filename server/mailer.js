@@ -12,8 +12,20 @@
 
 const nodemailer = require('nodemailer');
 
-const isSmtpConfigured = () =>
-  Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+const isResendSmtp = () =>
+  String(process.env.SMTP_HOST || '').trim().toLowerCase() === 'smtp.resend.com';
+
+const getResendApiKey = () =>
+  String(process.env.RESEND_API_KEY || process.env.SMTP_PASS || '').trim();
+
+const isSmtpConfigured = () => isResendSmtp()
+  ? Boolean(getResendApiKey())
+  : Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+
+const getMailFrom = () => {
+  const from = String(process.env.MAIL_FROM || process.env.SMTP_USER || '').trim();
+  return from.startsWith('<') && from.endsWith('>') ? from.slice(1, -1) : from;
+};
 
 let transporter = null;
 const getTransporter = () => {
@@ -47,7 +59,7 @@ const sendCredentialsEmail = async ({ to, username, password, loginUrl }) => {
     throw error;
   }
 
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
+  const from = getMailFrom();
   const appUrl = loginUrl || process.env.APP_URL || 'http://localhost:3000';
   const html = `
 <!DOCTYPE html>
@@ -110,13 +122,32 @@ const sendCredentialsEmail = async ({ to, username, password, loginUrl }) => {
     'Akun hanya bisa dipakai di maksimal 2 device.'
   ].join('\n');
 
-  return getTransporter().sendMail({
+  const message = {
     from,
     to,
     subject: '🎉 Akun Aktif — Username & Password Kamu',
     html,
     text
-  });
+  };
+
+  if (isResendSmtp()) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getResendApiKey()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(message),
+      signal: AbortSignal.timeout(20000)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Resend API error (${response.status}): ${result.message || result.name || 'Email tidak dapat dikirim.'}`);
+    }
+    return result;
+  }
+
+  return getTransporter().sendMail(message);
 };
 
 module.exports = {
