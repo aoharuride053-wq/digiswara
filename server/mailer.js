@@ -16,7 +16,7 @@ const isResendSmtp = () =>
   String(process.env.SMTP_HOST || '').trim().toLowerCase() === 'smtp.resend.com';
 
 const getResendApiKey = () =>
-  String(process.env.RESEND_API_KEY || process.env.SMTP_PASS || '').trim();
+  String(process.env.RESEND_API_KEY || '').trim();
 
 const isSmtpConfigured = () => isResendSmtp()
   ? Boolean(getResendApiKey())

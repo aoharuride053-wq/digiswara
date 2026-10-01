@@ -130,7 +130,9 @@ const RegisterPage = () => {
     if (submitResult.success) {
       setResult(submitResult.data);
       setPhase('success');
-      toast.success('Invoice terverifikasi! Akun berhasil dibuat.');
+      toast.success(submitResult.data.recovered
+        ? 'Kredensial baru dikirim ke email pembelian.'
+        : 'Invoice terverifikasi! Akun berhasil dibuat.');
     } else {
       setPhase('form');
       const friendly = ERROR_MESSAGES[submitResult.code];
@@ -160,7 +162,7 @@ const RegisterPage = () => {
                 <CheckCircleIcon className="h-8 w-8 text-emerald-600" />
               </span>
               <h1 className="mt-4 text-2xl font-bold text-slate-900">
-                Akun berhasil dibuat!
+                {result.recovered ? 'Kredensial dikirim ulang' : 'Akun berhasil dibuat!'}
               </h1>
               <p className="mt-2 text-sm text-slate-500">
                 Invoice dengan REF ID{' '}
@@ -172,7 +174,9 @@ const RegisterPage = () => {
 
               <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left">
                 <p className="text-sm text-slate-600">
-                  Username dan password sudah dikirim ke email:
+                  {result.recovered
+                    ? 'Password akun diperbarui. Username dan password baru dikirim ke email:'
+                    : 'Username dan password sudah dikirim ke email:'}
                 </p>
                 <p className="mt-1 break-all text-sm font-semibold text-slate-900">
                   {result.email}

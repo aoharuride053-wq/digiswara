@@ -702,50 +702,86 @@ app.post('/api/register/invoice', async (req, res) => {
       });
     }
 
-    // REF ID hanya boleh dipakai satu kali; email juga unik.
-    const usedBy = await new Promise((resolve, reject) => {
-      db.get(
-        'SELECT id, email FROM users WHERE lynk_ref_id = ? OR email = ?',
-        [extracted.refId, purchaseEmail],
-        (err, row) => (err ? reject(err) : resolve(row))
-      );
+    const findUser = (sql, value) => new Promise((resolve, reject) => {
+      db.get(sql, [value], (err, row) => (err ? reject(err) : resolve(row || null)));
     });
-    if (usedBy) {
-      const sameEmail = String(usedBy.email).toLowerCase() === purchaseEmail;
+    const [userByRef, userByEmail] = await Promise.all([
+      findUser('SELECT id, username, email, password, lynk_ref_id FROM users WHERE lynk_ref_id = ?', extracted.refId),
+      findUser('SELECT id, username, email, password, lynk_ref_id FROM users WHERE email = ?', purchaseEmail)
+    ]);
+
+    if (userByRef && String(userByRef.email).toLowerCase() !== purchaseEmail) {
       return res.status(409).json({
-        message: sameEmail
-          ? 'Email ini sudah memiliki akun. Silakan login.'
-          : 'REF ID ini sudah pernah dipakai untuk membuat akun.',
-        code: sameEmail ? 'EMAIL_ALREADY_REGISTERED' : 'REF_ALREADY_USED'
+        message: 'REF ID ini sudah terhubung ke akun lain.',
+        code: 'REF_ALREADY_USED'
+      });
+    }
+    if (userByEmail && userByEmail.lynk_ref_id && userByEmail.lynk_ref_id !== extracted.refId) {
+      return res.status(409).json({
+        message: 'Email pembelian ini sudah terhubung ke REF ID lain. Hubungi admin untuk bantuan.',
+        code: 'EMAIL_ALREADY_REGISTERED'
+      });
+    }
+    if (userByRef && userByEmail && userByRef.id !== userByEmail.id) {
+      return res.status(409).json({
+        message: 'REF ID dan email pembelian terhubung ke akun berbeda. Hubungi admin.',
+        code: 'ACCOUNT_LINK_CONFLICT'
       });
     }
 
-    // --- Buat akun: email pembeli + password acak ---
-    const username = await new Promise((resolve, reject) => {
-      generateUsernameFromEmail(purchaseEmail, (err, name) =>
-        err ? reject(err) : resolve(name)
-      );
-    });
+    const existingUser = userByRef || userByEmail;
+    if (existingUser && !providedEmail) {
+      return res.status(400).json({
+        message: 'Masukkan email pembelian untuk mengirim ulang kredensial.',
+        code: 'EMAIL_REQUIRED_FOR_RECOVERY'
+      });
+    }
+
+    // Reusing the same verified purchase recovers the existing account by
+    // rotating its password and emailing the new credentials to the buyer.
+    const username = existingUser
+      ? existingUser.username
+      : await new Promise((resolve, reject) => {
+        generateUsernameFromEmail(purchaseEmail, (err, name) =>
+          err ? reject(err) : resolve(name)
+        );
+      });
     const plainPassword = generateRandomPassword();
     const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
-    const userId = await new Promise((resolve, reject) => {
-      db.run(
-        'INSERT INTO users (username, email, password, lynk_ref_id) VALUES (?, ?, ?, ?)',
-        [username, purchaseEmail, hashedPassword, extracted.refId],
-        function (err) {
-          if (err) reject(err);
-          else resolve(this.lastID);
+    let userId;
+    if (existingUser) {
+      userId = existingUser.id;
+      await new Promise((resolve, reject) => {
+        db.run(
+          'UPDATE users SET password = ?, lynk_ref_id = COALESCE(lynk_ref_id, ?) WHERE id = ?',
+          [hashedPassword, extracted.refId, userId],
+          function (err) {
+            if (err) reject(err);
+            else if (!this.changes) reject(new Error('Akun tidak ditemukan saat memperbarui kredensial.'));
+            else resolve();
+          }
+        );
+      });
+    } else {
+      userId = await new Promise((resolve, reject) => {
+        db.run(
+          'INSERT INTO users (username, email, password, lynk_ref_id) VALUES (?, ?, ?, ?)',
+          [username, purchaseEmail, hashedPassword, extracted.refId],
+          function (err) {
+            if (err) reject(err);
+            else resolve(this.lastID);
+          }
+        );
+      }).catch((insertErr) => {
+        if (String(insertErr.message || '').includes('UNIQUE')) {
+          const conflict = new Error('REF ID atau email sudah terdaftar.');
+          conflict.code = 'ALREADY_REGISTERED';
+          throw conflict;
         }
-      );
-    }).catch((insertErr) => {
-      if (String(insertErr.message || '').includes('UNIQUE')) {
-        const conflict = new Error('REF ID atau email sudah terdaftar.');
-        conflict.code = 'ALREADY_REGISTERED';
-        throw conflict;
-      }
-      throw insertErr;
-    });
+        throw insertErr;
+      });
+    }
 
     // --- Kirim username & password ke email pembeli ---
     const loginUrl = process.env.APP_URL || `http://localhost:${PORT}`;
@@ -767,25 +803,36 @@ app.post('/api/register/invoice', async (req, res) => {
         console.warn('SMTP belum dikonfigurasi; kredensial dikirim via respons (dev only).');
         devCredentials = { username, password: plainPassword };
       } else {
-        // Produksi: gagal kirim email = gagal registrasi; hapus akun agar bisa dicoba ulang.
-        await new Promise((resolve) =>
-          db.run('DELETE FROM users WHERE id = ?', [userId], () => resolve())
-        );
+        // Restore existing credentials if recovery email delivery fails.
+        if (existingUser) {
+          await new Promise((resolve) => db.run(
+            'UPDATE users SET password = ?, lynk_ref_id = ? WHERE id = ?',
+            [existingUser.password, existingUser.lynk_ref_id, userId],
+            () => resolve()
+          ));
+        } else {
+          await new Promise((resolve) =>
+            db.run('DELETE FROM users WHERE id = ?', [userId], () => resolve())
+          );
+        }
         console.error('Gagal mengirim email kredensial:', mailErr.message);
         return res.status(502).json({
-          message: 'Gagal mengirim email kredensial. Akun belum dibuat — coba lagi nanti.',
+          message: 'Gagal mengirim email kredensial. Periksa konfigurasi email lalu coba lagi.',
           code: 'EMAIL_FAILED'
         });
       }
     }
 
-    res.status(201).json({
+    res.status(existingUser ? 200 : 201).json({
       success: true,
-      message: `Akun berhasil dibuat! Username dan password dikirim ke ${purchaseEmail}.`,
+      message: existingUser
+        ? `Akun ditemukan. Kredensial baru dikirim ke ${purchaseEmail}.`
+        : `Akun berhasil dibuat! Username dan password dikirim ke ${purchaseEmail}.`,
       email: purchaseEmail,
       username,
       emailSent,
       refId: extracted.refId,
+      recovered: Boolean(existingUser),
       ...(devCredentials
         ? {
             credentials: devCredentials,

@@ -4,7 +4,8 @@
 //   1. POST /api/webhook/lynk  -> transaksi tersimpan (dengan signature bila merchant key ada)
 //   2. POST /api/register/invoice dengan PDF invoice tiruan
 //        -> AI (Gemini) membaca REF ID 32 karakter, akun dibuat, kredensial dikembalikan
-//   3. Registrasi ulang dengan REF yang sama -> DITOLAK (sudah dipakai)
+//   3. REF/email sama mereset password dan mengirim kredensial ulang
+//      REF sama dengan email berbeda tetap ditolak
 //   4. Login 3 device berbeda -> device 1-2 OK, device 3 DITOLAK (batas 2 device)
 //   5. Request dengan device header yang tidak sesuai token -> DITOLAK
 //   6. POST /api/register lama -> DITOLAK
@@ -191,11 +192,11 @@ async function main() {
     check('Kredensial tersedia untuk uji login', false, 'password tidak dikembalikan');
   }
 
-  // ===== 3. REF ID tidak boleh dipakai dua kali =====
+  // ===== 3. Recovery akun dengan REF dan email pembelian yang sama =====
   // Catatan: panggilan AI bisa gagal sesaat (503/429). Bila begitu, ulangi sekali.
-  const registerAgain = async () => {
+  const registerAgain = async (requestEmail = testEmail) => {
     const res = await postJson('/api/register/invoice', {
-      email: testEmail,
+      email: requestEmail,
       invoice: {
         filename: `invoice-ulang-${suffix}.pdf`,
         type: 'application/pdf',
@@ -211,10 +212,23 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 4000));
     reuse = await registerAgain();
   }
+  if (reuse.body.credentials?.password) createdPassword = reuse.body.credentials.password;
   check(
-    'Registrasi ulang dengan REF sama DITOLAK',
-    reuse.res.status === 409,
+    'REF/email sama memulihkan akun dan mengirim ulang kredensial',
+    reuse.res.status === 200 && reuse.body.success === true && reuse.body.recovered === true,
     reuse.body.code || `status ${reuse.res.status}`
+  );
+  check(
+    'Recovery mempertahankan username akun',
+    reuse.body.username === createdUsername,
+    String(reuse.body.username)
+  );
+
+  const wrongEmailReuse = await registerAgain(`other-${suffix}@example.com`);
+  check(
+    'REF sama dengan email berbeda DITOLAK',
+    wrongEmailReuse.res.status === 409 && wrongEmailReuse.body.code === 'EMAIL_MISMATCH',
+    wrongEmailReuse.body.code || `status ${wrongEmailReuse.res.status}`
   );
 
   // ===== 4. Batas 2 device per akun =====
