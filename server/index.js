@@ -575,6 +575,9 @@ app.post('/api/register/invoice', async (req, res) => {
     try {
       extracted = await extractInvoiceData({ base64Data, mimeType: invoice.type });
     } catch (aiErr) {
+      if (String(aiErr.code || '').startsWith('TOKENHARBOR_')) {
+        console.error('TokenHarbor invoice analysis failed:', aiErr.message);
+      }
       const status =
         aiErr.code === 'INVALID_FILE_TYPE' ? 400
         : aiErr.status === 429 ? 429

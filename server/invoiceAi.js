@@ -117,6 +117,7 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
   }
 
   let lastError;
+  const failures = [];
   for (const model of TOKENHARBOR_VISION_MODELS) {
     let response;
     try {
@@ -145,6 +146,7 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
       });
     } catch (requestError) {
       lastError = requestError;
+      failures.push(`${model}: ${requestError.message}`);
       continue;
     }
 
@@ -156,7 +158,9 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
       } catch (_) {
         // Keep the provider response when it is not JSON.
       }
+      detail = String(detail).replaceAll(TOKENHARBOR_API_KEY, '[redacted]').slice(0, 400);
       lastError = new Error(`TokenHarbor ${model} (${response.status}): ${detail}`);
+      failures.push(lastError.message);
       if (response.status === 401) {
         lastError.code = 'TOKENHARBOR_AUTH_FAILED';
         lastError.status = response.status;
@@ -189,10 +193,12 @@ const readWithTokenHarbor = async ({ imageMimeType, imageBase64 }) => {
       };
     } catch (parseError) {
       lastError = parseError;
+      failures.push(`${model}: ${parseError.message}`);
     }
   }
 
-  const error = new Error(lastError?.message || 'Semua model TokenHarbor gagal membaca invoice.');
+  const summary = failures.length ? failures.join(' | ').slice(0, 1600) : lastError?.message;
+  const error = new Error(summary || 'Semua model TokenHarbor gagal membaca invoice.');
   error.code = 'TOKENHARBOR_VISION_FAILED';
   throw error;
 };
