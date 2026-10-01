@@ -105,9 +105,9 @@ digunakan. Verifikasi domain pengirim di dashboard Resend terlebih dahulu; alama
   salin host, port, username, password/token SMTP dari dashboard provider ke
   variabel `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, dan `SMTP_PASS`.
 
-4. Kalau `SMTP_*` belum diisi dan `NODE_ENV` bukan `production`, akun tetap
-   dibuat dan kredensial dikembalikan di respons (berguna saat uji coba).
-   Di `production`, email gagal = akun tidak jadi, agar pembeli bisa mencoba lagi.
+4. Kalau email belum dikonfigurasi dan `NODE_ENV` bukan `production`, kredensial
+  hanya dikembalikan di respons untuk uji lokal. Di production, akun baru dibatalkan
+  jika email gagal; recovery akun yang sudah ada mengembalikan password lamanya.
 
 ### 3. Konfigurasi di `.env`
 
@@ -115,6 +115,12 @@ digunakan. Verifikasi domain pengirim di dashboard Resend terlebih dahulu; alama
 # Integrasi Lynk.id
 LYNK_MERCHANT_KEY=
 LYNK_PRODUCT_NAME=Text to Speech with Natural Expression
+
+# Database (lokal boleh memakai SQLite; Railway disarankan MongoDB)
+DATABASE_BACKEND=sqlite
+MONGODB_URI=
+MONGODB_DATABASE=digiswara
+DB_PATH=./database/app.db
 
 # TokenHarbor Vision untuk gambar dan PDF scan invoice
 TOKENHARBOR_API_KEY=thk_live_key_dari_tokenharbor
@@ -133,6 +139,26 @@ MAX_DEVICES=2
 DEVICE_STALE_DAYS=30
 REGISTER_RATE_LIMIT=10
 ```
+
+Di Railway, set `DATABASE_BACKEND=mongodb`, `MONGODB_URI`, dan `MONGODB_DATABASE`
+di **Service Variables**. Isi `MONGODB_URI` sebagai secret dari MongoDB Atlas dan
+pastikan Network Access Atlas mengizinkan koneksi dari Railway. Jika
+`DATABASE_BACKEND` tidak diset, server memilih MongoDB di production atau jika
+`MONGODB_URI` tersedia; production tanpa URI akan gagal start agar webhook dan
+registrasi tidak diam-diam masuk ke SQLite sementara. Pilihan eksplisit
+`DATABASE_BACKEND=sqlite` tetap memakai SQLite.
+
+Server menunggu MongoDB tersambung sebelum menerima request. Akun ada di koleksi
+`users` dan transaksi/invoice yang diterima dari webhook Lynk.id ada di
+`lynk_transactions` pada database `MONGODB_DATABASE` (default `digiswara`). Invoice
+yang baru diunggah tidak disimpan sebagai file maupun sebagai percobaan registrasi;
+ref hanya terikat ke akun setelah registrasi berhasil. Data SQLite lama berada di
+file yang ditunjukkan log `SQLite history/device database path` (default
+`./database/app.db`, relatif ke working directory server). Saat MongoDB aktif,
+data akun dan transaksi yang masih ada di file SQLite itu disalin saat startup;
+data SQLite yang sudah hilang dari container tanpa Railway Volume tidak dapat
+dimigrasikan. Riwayat TTS dan daftar device tetap di SQLite, jadi pasang Railway
+Volume di `/app/data` untuk mempertahankan data tersebut dan file audio.
 
 ---
 

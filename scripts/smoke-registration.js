@@ -20,6 +20,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
+const mongoStore = require('../server/mongoStore');
 
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -313,9 +314,20 @@ async function main() {
 
   // ===== 7. Pembersihan data uji =====
   try {
-    await dbRun('DELETE FROM user_devices WHERE user_id IN (SELECT id FROM users WHERE email = ?)', [testEmail]);
-    await dbRun('DELETE FROM users WHERE email = ?', [testEmail]);
-    await dbRun('DELETE FROM lynk_transactions WHERE ref_id = ?', [refId]);
+    if (String(process.env.DATABASE_BACKEND || 'sqlite').toLowerCase() === 'mongodb') {
+      await mongoStore.connect(process.env.MONGODB_URI, process.env.MONGODB_DATABASE || 'digiswara');
+      const testUser = await mongoStore.findUserByEmail(testEmail);
+      if (testUser) {
+        await dbRun('DELETE FROM user_devices WHERE user_id = ?', [testUser.id]);
+        await mongoStore.deleteUser(testUser.id);
+      }
+      await mongoStore.transactions.deleteOne({ ref_id: refId });
+      await mongoStore.close();
+    } else {
+      await dbRun('DELETE FROM user_devices WHERE user_id IN (SELECT id FROM users WHERE email = ?)', [testEmail]);
+      await dbRun('DELETE FROM users WHERE email = ?', [testEmail]);
+      await dbRun('DELETE FROM lynk_transactions WHERE ref_id = ?', [refId]);
+    }
     console.log('[CLEAN] Data uji dihapus dari database.');
   } catch (err) {
     console.warn('[CLEAN] Gagal membersihkan data uji:', err.message);

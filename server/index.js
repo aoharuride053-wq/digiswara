@@ -19,9 +19,23 @@ const {
 const { extractInvoiceData, ALLOWED_MIME_TYPES } = require('./invoiceAi');
 const mailer = require('./mailer');
 const devices = require('./devices');
+const mongoStore = require('./mongoStore');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const MONGODB_URI = String(process.env.MONGODB_URI || '').trim();
+const configuredDatabaseBackend = String(process.env.DATABASE_BACKEND || '').trim().toLowerCase();
+const DATABASE_BACKEND = configuredDatabaseBackend || (
+  process.env.NODE_ENV === 'production' || MONGODB_URI ? 'mongodb' : 'sqlite'
+);
+const USE_MONGODB = DATABASE_BACKEND === 'mongodb';
+const MONGODB_DATABASE = String(process.env.MONGODB_DATABASE || 'digiswara').trim();
+if (!['mongodb', 'sqlite'].includes(DATABASE_BACKEND)) {
+  throw new Error('DATABASE_BACKEND harus bernilai mongodb atau sqlite.');
+}
+if (USE_MONGODB && !MONGODB_URI) {
+  throw new Error('DATABASE_BACKEND=mongodb membutuhkan MONGODB_URI.');
+}
 const refLogTag = (refId) => crypto.createHash('sha256').update(String(refId || '')).digest('hex').slice(0, 12);
 const HISTORY_TTL_MS = 5 * 60 * 1000;
 const allowedClientOrigins = (process.env.CLIENT_ORIGINS
@@ -374,8 +388,7 @@ app.post('/api/login', (req, res) => {
       });
     }
 
-    const query = 'SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1';
-    db.get(query, [username.trim(), username.trim().toLowerCase()], async (err, user) => {
+    const finishLogin = async (err, user) => {
       if (err) {
         return res.status(500).json({ message: 'Database error' });
       }
@@ -432,7 +445,16 @@ app.post('/api/login', (req, res) => {
           });
         }
       );
-    });
+    };
+
+    if (USE_MONGODB) {
+      mongoStore.findUserByLogin(username.trim(), username.trim().toLowerCase())
+        .then((user) => finishLogin(null, user))
+        .catch((err) => finishLogin(err));
+    } else {
+      const query = 'SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1';
+      db.get(query, [username.trim(), username.trim().toLowerCase()], finishLogin);
+    }
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -496,22 +518,26 @@ app.post('/api/webhook/lynk', (req, res) => {
     }
 
     console.log(`[webhook:lynk] sebelum upsertTransaction: refTag=${refTag} amount=${parsed.amount} status=${parsed.statusRaw}`);
-    upsertTransaction(
-      db,
-      { ...parsed, rawPayload: payload },
-      (err) => {
-        if (err) {
-          console.error('[webhook:lynk] upsertTransaction gagal:', err.message);
-          console.error('Webhook Lynk.id gagal menyimpan transaksi:', err.message);
-          return res.status(500).json({ success: false, message: 'Gagal menyimpan transaksi.' });
-        }
-        console.log(`[webhook:lynk] setelah upsertTransaction: berhasil menyimpan refTag=${refTag}`);
-        console.log(
-          `Webhook Lynk.id diterima: refTag=${refTag} paid=${parsed.isPaid} status=${parsed.statusRaw || 'missing'} product=${parsed.productTitle || '-'}`
-        );
-        res.json({ success: true, refId: parsed.refId, isPaid: parsed.isPaid });
+    const onTransactionSaved = (err) => {
+      if (err) {
+        console.error('[webhook:lynk] upsertTransaction gagal:', err.message);
+        console.error('Webhook Lynk.id gagal menyimpan transaksi:', err.message);
+        return res.status(500).json({ success: false, message: 'Gagal menyimpan transaksi.' });
       }
-    );
+      console.log(`[webhook:lynk] setelah upsertTransaction: berhasil menyimpan refTag=${refTag}`);
+      console.log(
+        `Webhook Lynk.id diterima: refTag=${refTag} paid=${parsed.isPaid} status=${parsed.statusRaw || 'missing'} product=${parsed.productTitle || '-'}`
+      );
+      res.json({ success: true, refId: parsed.refId, isPaid: parsed.isPaid });
+    };
+
+    if (USE_MONGODB) {
+      mongoStore.upsertTransaction({ ...parsed, rawPayload: payload })
+        .then(() => onTransactionSaved(null))
+        .catch(onTransactionSaved);
+    } else {
+      upsertTransaction(db, { ...parsed, rawPayload: payload }, onTransactionSaved);
+    }
   } catch (err) {
     console.error('Webhook Lynk.id error:', err.message);
     res.status(500).json({ success: false, message: 'Terjadi kesalahan server.' });
@@ -545,12 +571,18 @@ const generateUsernameFromEmail = (email, callback) => {
   const root = base.length >= 3 ? base : `user${base}`;
 
   const tryInsert = (candidate, attempt) => {
-    db.get('SELECT id FROM users WHERE username = ?', [candidate], (err, row) => {
-      if (err) return callback(err);
+    const lookup = USE_MONGODB
+      ? mongoStore.findUserByUsername(candidate)
+      : new Promise((resolve, reject) => {
+        db.get('SELECT id FROM users WHERE username = ?', [candidate], (err, row) =>
+          err ? reject(err) : resolve(row)
+        );
+      });
+    lookup.then((row) => {
       if (!row) return callback(null, candidate);
       if (attempt > 50) return callback(new Error('Username tidak tersedia.'));
       tryInsert(`${root}${attempt + 1}`, attempt + 1);
-    });
+    }).catch(callback);
   };
   tryInsert(root, 1);
 };
@@ -639,11 +671,13 @@ app.post('/api/register/invoice', async (req, res) => {
     // --- Cek transaksi dari webhook Lynk.id ---
     const refTag = refLogTag(extracted.refId);
     console.log(`[register:invoice] ${new Date().toISOString()} query getTransactionByRef refTag=${refTag} refIdLength=${String(extracted.refId).length}`);
-    const transaction = await new Promise((resolve, reject) => {
-      getTransactionByRef(db, extracted.refId, (err, row) =>
-        err ? reject(err) : resolve(row)
-      );
-    });
+    const transaction = USE_MONGODB
+      ? await mongoStore.findTransactionByRef(extracted.refId)
+      : await new Promise((resolve, reject) => {
+        getTransactionByRef(db, extracted.refId, (err, row) =>
+          err ? reject(err) : resolve(row)
+        );
+      });
     if (transaction) {
       console.log(
         `[register:invoice] ${new Date().toISOString()} transaksi ditemukan:`,
@@ -702,13 +736,22 @@ app.post('/api/register/invoice', async (req, res) => {
       });
     }
 
-    const findUser = (sql, value) => new Promise((resolve, reject) => {
-      db.get(sql, [value], (err, row) => (err ? reject(err) : resolve(row || null)));
-    });
-    const [userByRef, userByEmail] = await Promise.all([
-      findUser('SELECT id, username, email, password, lynk_ref_id FROM users WHERE lynk_ref_id = ?', extracted.refId),
-      findUser('SELECT id, username, email, password, lynk_ref_id FROM users WHERE email = ?', purchaseEmail)
-    ]);
+    let userByRef;
+    let userByEmail;
+    if (USE_MONGODB) {
+      [userByRef, userByEmail] = await Promise.all([
+        mongoStore.findUserByRef(extracted.refId),
+        mongoStore.findUserByEmail(purchaseEmail)
+      ]);
+    } else {
+      const findUser = (sql, value) => new Promise((resolve, reject) => {
+        db.get(sql, [value], (err, row) => (err ? reject(err) : resolve(row || null)));
+      });
+      [userByRef, userByEmail] = await Promise.all([
+        findUser('SELECT id, username, email, password, lynk_ref_id FROM users WHERE lynk_ref_id = ?', extracted.refId),
+        findUser('SELECT id, username, email, password, lynk_ref_id FROM users WHERE email = ?', purchaseEmail)
+      ]);
+    }
 
     if (userByRef && String(userByRef.email).toLowerCase() !== purchaseEmail) {
       return res.status(409).json({
@@ -752,35 +795,51 @@ app.post('/api/register/invoice', async (req, res) => {
     let userId;
     if (existingUser) {
       userId = existingUser.id;
-      await new Promise((resolve, reject) => {
-        db.run(
-          'UPDATE users SET password = ?, lynk_ref_id = COALESCE(lynk_ref_id, ?) WHERE id = ?',
-          [hashedPassword, extracted.refId, userId],
-          function (err) {
-            if (err) reject(err);
-            else if (!this.changes) reject(new Error('Akun tidak ditemukan saat memperbarui kredensial.'));
-            else resolve();
-          }
-        );
-      });
+      if (USE_MONGODB) {
+        await mongoStore.updateCredentials(userId, hashedPassword, existingUser.lynk_ref_id || extracted.refId);
+      } else {
+        await new Promise((resolve, reject) => {
+          db.run(
+            'UPDATE users SET password = ?, lynk_ref_id = COALESCE(lynk_ref_id, ?) WHERE id = ?',
+            [hashedPassword, extracted.refId, userId],
+            function (err) {
+              if (err) reject(err);
+              else if (!this.changes) reject(new Error('Akun tidak ditemukan saat memperbarui kredensial.'));
+              else resolve();
+            }
+          );
+        });
+      }
     } else {
-      userId = await new Promise((resolve, reject) => {
-        db.run(
-          'INSERT INTO users (username, email, password, lynk_ref_id) VALUES (?, ?, ?, ?)',
-          [username, purchaseEmail, hashedPassword, extracted.refId],
-          function (err) {
-            if (err) reject(err);
-            else resolve(this.lastID);
-          }
-        );
-      }).catch((insertErr) => {
-        if (String(insertErr.message || '').includes('UNIQUE')) {
+      try {
+        if (USE_MONGODB) {
+          const createdUser = await mongoStore.createUser({
+            username,
+            email: purchaseEmail,
+            password: hashedPassword,
+            refId: extracted.refId
+          });
+          userId = createdUser.id;
+        } else {
+          userId = await new Promise((resolve, reject) => {
+            db.run(
+              'INSERT INTO users (username, email, password, lynk_ref_id) VALUES (?, ?, ?, ?)',
+              [username, purchaseEmail, hashedPassword, extracted.refId],
+              function (err) {
+                if (err) reject(err);
+                else resolve(this.lastID);
+              }
+            );
+          });
+        }
+      } catch (insertErr) {
+        if (insertErr.code === 11000 || /unique/i.test(String(insertErr.message || ''))) {
           const conflict = new Error('REF ID atau email sudah terdaftar.');
           conflict.code = 'ALREADY_REGISTERED';
           throw conflict;
         }
         throw insertErr;
-      });
+      }
     }
 
     // --- Kirim username & password ke email pembeli ---
@@ -805,15 +864,23 @@ app.post('/api/register/invoice', async (req, res) => {
       } else {
         // Restore existing credentials if recovery email delivery fails.
         if (existingUser) {
-          await new Promise((resolve) => db.run(
-            'UPDATE users SET password = ?, lynk_ref_id = ? WHERE id = ?',
-            [existingUser.password, existingUser.lynk_ref_id, userId],
-            () => resolve()
-          ));
+          if (USE_MONGODB) {
+            await mongoStore.restoreCredentials(userId, existingUser.password, existingUser.lynk_ref_id);
+          } else {
+            await new Promise((resolve) => db.run(
+              'UPDATE users SET password = ?, lynk_ref_id = ? WHERE id = ?',
+              [existingUser.password, existingUser.lynk_ref_id, userId],
+              () => resolve()
+            ));
+          }
         } else {
-          await new Promise((resolve) =>
-            db.run('DELETE FROM users WHERE id = ?', [userId], () => resolve())
-          );
+          if (USE_MONGODB) {
+            await mongoStore.deleteUser(userId);
+          } else {
+            await new Promise((resolve) =>
+              db.run('DELETE FROM users WHERE id = ?', [userId], () => resolve())
+            );
+          }
         }
         console.error('Gagal mengirim email kredensial:', mailErr.message);
         return res.status(502).json({
@@ -871,14 +938,18 @@ app.delete('/api/devices/current', authenticateJWT, (req, res) => {
 
 // Get user profile
 app.get('/api/profile', authenticateJWT, (req, res) => {
+  if (USE_MONGODB) {
+    return mongoStore.findUserById(req.user.id)
+      .then((user) => user
+        ? res.json({ user })
+        : res.status(404).json({ message: 'User not found' }))
+      .catch(() => res.status(500).json({ message: 'Database error' }));
+  }
+
   const query = 'SELECT id, username, email, created_at FROM users WHERE id = ?';
   db.get(query, [req.user.id], (err, user) => {
-    if (err) {
-      return res.status(500).json({ message: 'Database error' });
-    }
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (err) return res.status(500).json({ message: 'Database error' });
+    if (!user) return res.status(404).json({ message: 'User not found' });
     res.json({ user });
   });
 });
@@ -1231,7 +1302,11 @@ app.post('/api/tts/generate', authenticateJWT, async (req, res) => {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    databaseBackend: USE_MONGODB ? 'mongodb' : 'sqlite',
+    timestamp: new Date().toISOString()
+  });
 });
 
 const CLIENT_BUILD_DIR = path.join(__dirname, '..', 'client', 'build');
@@ -1437,24 +1512,42 @@ function normalizeGeminiAudio(rawBuffer, mimeType) {
   };
 }
 
-// Start server
-const server = app.listen(PORT, () => {
-  console.log(`Server berjalan di http://localhost:${PORT}`);
-  console.log(`Railway volume mount: ${RAILWAY_VOLUME_MOUNT_PATH || '(not mounted)'}`);
-  console.log(`SQLite database path: ${dbPath}`);
-  if (process.env.NODE_ENV === 'production' && !RAILWAY_VOLUME_MOUNT_PATH) {
-    console.warn('Railway Volume tidak terdeteksi; SQLite berada di filesystem lokal dan dapat hilang saat redeploy/restart.');
+// Connect account/transaction storage before accepting webhooks or registrations.
+const server = require('http').createServer(app);
+const startServer = async () => {
+  try {
+    if (USE_MONGODB) {
+      await mongoStore.connect(MONGODB_URI, MONGODB_DATABASE);
+      const migrated = await mongoStore.migrateFromSqlite(db);
+      console.log(`MongoDB account/transaction store connected (database=${MONGODB_DATABASE}); migrated ${migrated.users} users and ${migrated.transactions} transactions from SQLite.`);
+    } else if (process.env.NODE_ENV === 'production') {
+      console.warn('DATABASE_BACKEND bukan mongodb; akun dan transaksi memakai SQLite lokal dan dapat hilang saat container diganti.');
+    }
+
+    server.listen(PORT, () => {
+      console.log(`Server berjalan di http://localhost:${PORT}`);
+      console.log(`Account/transaction store: ${USE_MONGODB ? 'MongoDB' : 'SQLite'}`);
+      console.log(`Railway volume mount: ${RAILWAY_VOLUME_MOUNT_PATH || '(not mounted)'}`);
+      console.log(`SQLite history/device database path: ${dbPath}`);
+      if (process.env.NODE_ENV === 'production' && !RAILWAY_VOLUME_MOUNT_PATH) {
+        console.warn('Railway Volume tidak terdeteksi; SQLite history/device dan audio lokal dapat hilang saat redeploy/restart.');
+      }
+      console.log(`Audio storage path: ${AUDIO_DIR}`);
+      console.log(`Model Gemini TTS fallback order: ${GEMINI_TTS_MODEL_ORDER.map((model) => model.id).join(' -> ')}`);
+      console.log(`Model naskah Voice Over Xkiro: ${XKIRO_VOICEOVER_MODELS.join(' -> ')}`);
+      console.log(process.env.XKIRO_API_KEY ? 'XKIRO_API_KEY: terdeteksi' : 'XKIRO_API_KEY: BELUM DIISI');
+      console.log(
+        process.env.GEMINI_API_KEY
+          ? 'GEMINI_API_KEY: terdeteksi'
+          : 'GEMINI_API_KEY: BELUM DIISI (isi file .env dulu!)'
+      );
+    });
+  } catch (error) {
+    const message = String(error.message || error).replace(MONGODB_URI, '[redacted MongoDB URI]');
+    console.error(`Backend gagal inisialisasi: ${message}`);
+    db.close(() => process.exit(1));
   }
-  console.log(`Audio storage path: ${AUDIO_DIR}`);
-  console.log(`Model Gemini TTS fallback order: ${GEMINI_TTS_MODEL_ORDER.map((model) => model.id).join(' -> ')}`);
-  console.log(`Model naskah Voice Over Xkiro: ${XKIRO_VOICEOVER_MODELS.join(' -> ')}`);
-  console.log(process.env.XKIRO_API_KEY ? 'XKIRO_API_KEY: terdeteksi' : 'XKIRO_API_KEY: BELUM DIISI');
-  console.log(
-    process.env.GEMINI_API_KEY
-      ? 'GEMINI_API_KEY: terdeteksi'
-      : 'GEMINI_API_KEY: BELUM DIISI (isi file .env dulu!)'
-  );
-});
+};
 
 server.on('error', async (error) => {
   if (error.code === 'EADDRINUSE') {
@@ -1477,4 +1570,6 @@ server.on('error', async (error) => {
   db.close(() => process.exit(1));
 });
 
-module.exports = { app, server, db };
+startServer();
+
+module.exports = { app, server, db, startServer };
