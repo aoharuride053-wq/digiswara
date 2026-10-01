@@ -8,7 +8,7 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "dev:webhook": "concurrently -k \"npm run server\" \"npm run client\" \"npm exec --yes --package=localtunnel -- lt --port 5000\"",
     "dev:webhook:cloudflare": "concurrently -k \"npm run server\" \"npm run client\" \"node scripts/run-cloudflare-tunnel.js\"",
-    "build": "cd client && npm run build",
+    "build": "npm --prefix client ci --include=dev && npm --prefix client run build",
     "test:history-retention": "node scripts/smoke-history-retention.js",
     "test:registration": "node scripts/smoke-registration.js",
     "test:device-limit": "node scripts/smoke-device-limit.js",
